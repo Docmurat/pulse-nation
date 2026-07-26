@@ -68,3 +68,91 @@
     #note{display:none}
     #legend{bottom:12px;left:12px;font-size:10.5px;padding:9px 12px}
   }
+ /* ============ Форма «Добавить семью» ============ */
+.af-fab{position:fixed;right:22px;bottom:22px;z-index:20;
+  display:flex;align-items:center;gap:8px;
+  padding:11px 18px;border:none;border-radius:24px;cursor:pointer;
+  background:var(--male);color:#fff;font-size:13.5px;font-weight:600;
+  box-shadow:0 4px 16px rgba(30,159,224,.4);font-family:inherit}
+.af-fab:hover{background:#177fc0}
+
+.af-overlay{position:fixed;inset:0;z-index:50;background:rgba(20,35,55,.35);
+  backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;
+  padding:40px 16px;overflow-y:auto}
+.af-panel{width:100%;max-width:460px;background:#fff;border-radius:18px;
+  box-shadow:0 20px 60px rgba(30,50,80,.28);padding:22px;
+  font-family:"Segoe UI",system-ui,sans-serif;color:var(--ink)}
+.af-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.af-head h2{font-size:18px;font-weight:600}
+.af-x{background:none;border:none;font-size:18px;color:var(--dim);cursor:pointer}
+.af-x:hover{color:var(--ink)}
+
+.af-section{margin-bottom:14px}
+.af-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+
+.pf-picker{border:1px solid var(--line);border-radius:12px;padding:12px;background:rgba(240,246,252,.5)}
+.pf-role{font-size:12px;color:var(--dim);margin-bottom:8px}
+.pf-modes{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.pf-modes button{padding:5px 11px;border:1px solid var(--line);border-radius:14px;
+  background:#fff;font-size:12px;cursor:pointer;color:var(--dim);font-family:inherit}
+.pf-modes button.on{background:var(--male);color:#fff;border-color:var(--male)}
+.pf-search input,.pf-fields input{width:100%;padding:8px 11px;border:1px solid var(--line);
+  border-radius:9px;font-size:13px;outline:none;margin-bottom:6px;font-family:inherit;box-sizing:border-box}
+.pf-fields{display:flex;gap:6px}
+.pf-fields input{margin-bottom:0}
+.pf-results{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff;margin-top:2px}
+.pf-res{padding:8px 11px;font-size:13px;cursor:pointer;border-bottom:1px solid rgba(35,60,90,.06)}
+.pf-res:hover{background:rgba(30,159,224,.08)}
+.pf-chosen{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 11px;background:rgba(30,159,224,.1);border-radius:9px;font-size:13px;font-weight:600}
+.pf-chosen button{background:none;border:none;color:var(--dim);cursor:pointer;font-size:14px}
+.pf-hint{font-size:11.5px;color:var(--dim);font-style:italic}
+
+.af-row2{display:flex;gap:10px;margin-bottom:14px}
+.af-row2 label{flex:1;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);display:flex;flex-direction:column;gap:5px}
+.af-row2 input{padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;outline:none;font-family:inherit;color:var(--ink)}
+
+.af-mother{border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;background:rgba(248,251,254,.7)}
+.af-mother-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
+  font-size:13px;font-weight:600;color:var(--ink)}
+.af-relation{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--dim)}
+.af-relation select,.af-child select{padding:6px 8px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;font-family:inherit;background:#fff}
+
+.af-children{margin-top:12px}
+.af-children-title{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+.af-child{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.af-cname{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;font-family:inherit;min-width:0}
+.af-cyear{width:56px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;font-family:inherit}
+.af-alive{display:flex;align-items:center;gap:3px;font-size:13px;color:var(--dim);cursor:pointer}
+.af-remove{background:none;border:none;color:#d66;cursor:pointer;font-size:12px;padding:4px}
+.af-add-child{background:none;border:1px dashed var(--line);border-radius:8px;padding:6px 12px;
+  font-size:12.5px;color:var(--male);cursor:pointer;font-family:inherit;margin-top:4px}
+.af-add-mother{width:100%;background:rgba(30,159,224,.07);border:1px dashed var(--male);
+  border-radius:10px;padding:9px;font-size:13px;color:var(--male);cursor:pointer;font-family:inherit;margin-bottom:14px}
+
+.af-msg{padding:10px 12px;border-radius:9px;background:rgba(30,159,224,.1);font-size:13px;margin-bottom:12px;color:var(--ink)}
+.af-actions{display:flex;gap:10px}
+.af-save{flex:1;padding:11px;border:none;border-radius:10px;background:var(--male);color:#fff;
+  font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.af-save:disabled{opacity:.6;cursor:default}
+.af-cancel{padding:11px 18px;border:1px solid var(--line);border-radius:10px;background:#fff;
+  font-size:14px;cursor:pointer;color:var(--dim);font-family:inherit}
+
+@media (max-width:640px){
+  .af-fab{right:12px;bottom:12px}
+  .af-overlay{padding:12px}
+}
+
+/* подтверждение возможных дублей */
+.af-confirm{border:1px solid #E8A020;background:#FFF6E6;border-radius:11px;padding:12px;margin-bottom:12px}
+.af-confirm-title{font-size:13px;font-weight:600;color:#9A6A10;margin-bottom:8px}
+.af-confirm-row{font-size:12.5px;color:var(--ink);margin-bottom:6px;line-height:1.5}
+.af-confirm-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.af-confirm-yes{padding:8px 12px;border:none;border-radius:8px;background:#E8A020;color:#fff;font-size:12.5px;cursor:pointer;font-family:inherit}
+.af-confirm-no{padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--dim)}
+
+/* кнопка удаления человека в карточке */
+.c-delete{margin-top:14px;width:100%;padding:8px;border:1px solid rgba(210,90,90,.4);
+  border-radius:9px;background:rgba(210,90,90,.06);color:#c04a4a;font-size:12.5px;
+  cursor:pointer;font-family:inherit}
+.c-delete:hover{background:rgba(210,90,90,.13)}

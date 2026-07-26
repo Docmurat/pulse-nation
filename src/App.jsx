@@ -1,10 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import "./App.css";
+import AddFamily from "./AddFamily.jsx";
 
 export default function App() {
   const canvasRef = useRef(null);
   const startedRef = useRef(false);
+  const reloadRef = useRef(null);
+  const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -32,6 +35,7 @@ export default function App() {
       if (note) note.innerHTML = "⚠ " + msg;
     }
 
+    reloadRef.current = boot;
     boot();
 
     // ============ ПОСТРОЕНИЕ ГРАФА ИЗ ДАННЫХ БАЗЫ ============
@@ -172,7 +176,10 @@ export default function App() {
       /* ================= отрисовка ================= */
       const cssCache={};
       const css=v=>cssCache[v]||(cssCache[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim());
-      const colorOf=p=>p.death?css("--gone"):p.g==="m"?css("--male"):css("--female");
+      // Живые — яркие цвета; умершие — «тлеющие» (приглушённые) по полу.
+      const GONE_M="#5B7C99";  // тлеющий синий (муж, ушёл)
+      const GONE_F="#B08A6E";  // тлеющий тёпло-красный/охра (жен, ушла)
+      const colorOf=p=>p.death?(p.g==="m"?GONE_M:GONE_F):(p.g==="m"?css("--male"):css("--female"));
 
       const motes=Array.from({length:55},()=>({x:rnd(),y:rnd(),r:rnd()*26+8,vx:(rnd()-.5)*.00006,vy:(rnd()-.5)*.00006,a:rnd()*.05+.03}));
 
@@ -263,7 +270,7 @@ export default function App() {
 
           if(chipMode<1){
             ctx.globalAlpha*= (1-chipMode)||.001;
-            if(!p.death){ctx.shadowColor=c;ctx.shadowBlur=10}
+            ctx.shadowColor=c;ctx.shadowBlur=p.death?4:10; // умершие тлеют слабее живых
             ctx.fillStyle=c;
             roundRect(x-4.5*b,y-4.5*b,9*b,9*b,2.8);ctx.fill();
             ctx.shadowBlur=0;
@@ -277,7 +284,7 @@ export default function App() {
             ctx.fillStyle=p.death?"#E6EAEF":"rgba(255,255,255,.96)";
             roundRect(x-w/2,y-h/2,w,h,4);ctx.fill();
             ctx.shadowBlur=0;
-            ctx.strokeStyle=c;ctx.lineWidth=(p===selected||p===hovered?1.6:.9)/Math.sqrt(tf.k);
+            ctx.strokeStyle=c;ctx.lineWidth=(p===selected||p===hovered?1.1:.55)/Math.sqrt(tf.k);
             roundRect(x-w/2,y-h/2,w,h,4);ctx.stroke();
             drawAvatar(p,x-w/2+6.4,y,3.9);
             ctx.fillStyle=p.death?"#7A8798":"#22303F";
@@ -287,6 +294,14 @@ export default function App() {
             ctx.font="3.4px 'Segoe UI'";
             ctx.fillStyle=p.death?"#93A0B0":"#66788C";
             ctx.fillText(p.surname,x-w/2+12,y+2.9);
+            // полумесяц для ушедших (уважительно, без креста)
+            if(p.death){
+              const mx=x+w/2-5, my=y-h/2+4.5, mr=2.2;
+              ctx.fillStyle=p.g==="m"?GONE_M:GONE_F;
+              ctx.beginPath();ctx.arc(mx,my,mr,0,6.283);ctx.fill();
+              ctx.fillStyle=p.death?"#E6EAEF":"#fff";
+              ctx.beginPath();ctx.arc(mx+mr*0.55,my-mr*0.25,mr*0.85,0,6.283);ctx.fill();
+            }
           }
           ctx.globalAlpha=1;
         }
@@ -326,6 +341,20 @@ export default function App() {
         card.classList.add("on");
       }
       function deselect(){selected=null;clearHier();card.classList.remove("on")}
+
+      // удаление выбранного человека
+      const delBtn=document.getElementById("cDelete");
+      if(delBtn) delBtn.onclick=async()=>{
+        if(!selected)return;
+        const who=`${selected.surname||""} ${selected.name||""}`.trim();
+        if(!window.confirm(`Удалить «${who}»? Его связи исчезнут, дети останутся в базе.`))return;
+        try{
+          const r=await fetch(`http://localhost:3001/api/person/${selected.id}`,{method:"DELETE"});
+          const res=await r.json();
+          if(res.ok){ window.location.reload(); }
+          else alert("Не удалось удалить: "+(res.error||""));
+        }catch(e){ alert("Ошибка связи с сервером: "+e.message); }
+      };
       card.addEventListener("click",e=>{
         const a=e.target.closest("a[data-id]");
         if(!a)return;e.preventDefault();
@@ -379,7 +408,8 @@ export default function App() {
         <div className="hud" id="legend">
           <div className="lg"><span className="dot" style={{background: 'var(--male)', boxShadow: '0 0 6px var(--male)'}}></span>мужчины</div>
           <div className="lg"><span className="dot" style={{background: 'var(--female)', boxShadow: '0 0 6px var(--female)'}}></span>женщины</div>
-          <div className="lg"><span className="dot" style={{background: 'var(--gone)'}}></span>ушедшие</div>
+          <div className="lg"><span className="dot" style={{background: '#5B7C99'}}></span>ушедший ☾ (муж)</div>
+          <div className="lg"><span className="dot" style={{background: '#B08A6E'}}></span>ушедшая ☾ (жен)</div>
           <div className="lg"><span className="seg" style={{background: 'rgba(70,100,140,.5)'}}></span>нить родства</div>
         </div>
 
@@ -401,9 +431,18 @@ export default function App() {
           <div className="sub" id="cSub"></div>
           <div id="clan"></div>
           <div id="cRel"></div>
+          <button id="cDelete" className="c-delete">удалить этого человека</button>
         </div>
 
         <div className="hud" id="note">колесо — зум · пустое место — перемещение · частицу можно таскать<br/>клик по человеку — карточка и построение семьи по ярусам</div>
+
+        <button className="af-fab" onClick={() => setShowForm(true)}>＋ Добавить семью</button>
+        {showForm && (
+          <AddFamily
+            onClose={() => setShowForm(false)}
+            onSaved={() => { setTimeout(() => window.location.reload(), 900); }}
+          />
+        )}
     </>
   );
 }
