@@ -7,92 +7,71 @@ export default function App() {
   const startedRef = useRef(false);
 
   useEffect(() => {
-    // защита от повторного запуска в StrictMode (React в dev вызывает эффект дважды)
     if (startedRef.current) return;
     startedRef.current = true;
 
-      /* ================= данные (вымышленные) ================= */
-      function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);
-        t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-      const rnd=mulberry32(20260726);
-      const ri=n=>Math.floor(rnd()*n);
-      const pick=a=>a[ri(a.length)];
+    // ============ ЗАГРУЗКА ДАННЫХ С СЕРВЕРА ============
+    async function boot() {
+      let raw;
+      try {
+        const resp = await fetch("http://localhost:3001/api/graph");
+        raw = await resp.json();
+      } catch {
+        showError("Не удалось связаться с сервером. Проверьте, что сервер запущен (node index.js).");
+        return;
+      }
+      if (!raw.people || raw.people.length === 0) {
+        showError("База пуста — нет людей для отображения.");
+        return;
+      }
+      run(raw);
+    }
 
-      const CLANS=["Боташев","Урусов","Байрамуков","Хубиев","Текеев","Аджиев"];
-      /* условные знаки родов в стиле тамги — придуманы для демо */
-      const TAMGA=[
-        "M17 5a7 7 0 1 0 .01 0 M17 19v10",
-        "M9 29V13 M17 29V7 M25 29V13 M9 13q8-7 16 0",
-        "M23 8a9 9 0 1 0 0 18 M23 14a4 4 0 1 1 0 6",
-        "M8 8h18 M11 8v20 M23 8v20 M11 20h12",
-        "M17 6l10 11-10 11L7 17Z M17 12v10",
-        "M8 11q9-8 9 6t9 6 M12 27h10"
-      ];
-      const MN=["Мурат","Аслан","Азамат","Казбек","Хасан","Умар","Ислам","Расул","Магомет","Солтан","Артур","Тимур","Рустам","Марат","Ахмат","Осман"];
-      const FN=["Фатима","Мадина","Амина","Лейла","Залина","Диана","Асият","Зухра","Лаура","Марьям","Джамиля","Алина","Танзиля","Аминат"];
-      const fs=s=>s+"а";
-      const patr=(f,g)=>f? f.name+(g==="m"?"ович":"овна") : "";
+    function showError(msg) {
+      const note = document.getElementById("note");
+      if (note) note.innerHTML = "⚠ " + msg;
+    }
+
+    boot();
+
+    // ============ ПОСТРОЕНИЕ ГРАФА ИЗ ДАННЫХ БАЗЫ ============
+    function run(raw) {
+
+      // Превращаем записи из базы в формат, который понимает космос.
       const AVA=[["#38B6E8","#1F7FD0"],["#F2A25E","#E07A2C"],["#7BC97F","#3F9C57"],["#B08CE0","#7C5BC7"],["#F08CA0","#D65B7A"]];
+      const people = raw.people.map((r, i) => ({
+        id: r.id,
+        surname: r.last_name,
+        name: r.first_name,
+        patr: r.patronymic || "",
+        maiden: r.maiden_name || null,
+        g: r.gender,                       // 'm' / 'f'
+        death: r.is_alive ? null : 1,      // не жив → помечаем «ушедший»
+        birth: r.birth_year || null,
+        clan: r.clan_id || 0,
+        photo: false,
+        av: AVA[i % AVA.length],
+        father: null, mother: null, spouse: null,
+      }));
+      const byId = new Map(people.map(p => [p.id, p]));
 
-      const people=[],links=[];
-      let seq=0;
-      function addP(o){o.id=seq++;o.photo=rnd()<0.55;o.av=pick(AVA);people.push(o);return o}
-      function link(a,b,type,recent){links.push({source:a.id,target:b.id,type,recent:!!recent})}
-
-      const YEAR=2026;
-      const g1=[];
-      for(let c=0;c<CLANS.length;c++){
-        const fb=1926+ri(8);
-        const dad=addP({surname:CLANS[c],name:pick(MN),g:"m",clan:c,birth:fb,death:1992+ri(24),gen:0});
-        dad.patr=pick(MN)+"ович";
-        const mc=(c+1)%CLANS.length;
-        const mom=addP({surname:fs(CLANS[c]),maiden:fs(CLANS[mc]),name:pick(FN),g:"f",clan:c,
-          birth:fb+2+ri(4),death:1998+ri(24),gen:0});
-        mom.patr=pick(MN)+"овна";
-        link(dad,mom,"spouse");
-        const n=3+(c%2);
-        for(let k=0;k<n;k++){
-          const g=rnd()<0.5?"m":"f";
-          const ch=addP({surname:g==="m"?CLANS[c]:fs(CLANS[c]),name:g==="m"?pick(MN):pick(FN),
-            g,clan:c,birth:1950+c*2+k*4+ri(3),death:null,gen:1,father:dad.id,mother:mom.id});
-          ch.patr=patr(dad,g);
-          link(dad,ch,"parent");link(mom,ch,"parent");
-          g1.push(ch);
+      // Связи из базы → нити + проставляем father/mother/spouse
+      const links = [];
+      for (const rel of raw.relationships) {
+        const a = byId.get(rel.person_a), b = byId.get(rel.person_b);
+        if (!a || !b) continue;
+        if (rel.kind === "parent") {
+          links.push({ source: a.id, target: b.id, type: "parent", recent: false });
+          // b — ребёнок; проставим ему родителя по полу
+          if (a.g === "f") b.mother = a.id; else b.father = a.id;
+        } else if (rel.kind === "spouse") {
+          links.push({ source: a.id, target: b.id, type: "spouse", recent: false });
+          a.spouse = b.id; b.spouse = a.id;
         }
       }
-      g1[2].death=2014+ri(10); g1[9].death=2010+ri(10);
 
-      const g2=[];
-      const brides=g1.filter(p=>p.g==="f");
-      for(const groom of g1.filter(p=>p.g==="m")){
-        const bride=brides.find(b=>b.clan!==groom.clan&&!b.spouse);
-        if(!bride)continue;
-        groom.spouse=bride.id;bride.spouse=groom.id;
-        bride.maiden=bride.surname;bride.surname=fs(groom.surname);bride.clan=groom.clan;
-        link(groom,bride,"spouse");
-        const kids=2+ri(2),base=Math.max(groom.birth,bride.birth)+22;
-        for(let k=0;k<kids;k++){
-          const g=rnd()<0.5?"m":"f";
-          const ch=addP({surname:g==="m"?groom.surname:fs(groom.surname),name:g==="m"?pick(MN):pick(FN),
-            g,clan:groom.clan,birth:base+k*3+ri(3),death:null,gen:2,father:groom.id,mother:bride.id});
-          ch.patr=patr(groom,g);
-          link(groom,ch,"parent");link(bride,ch,"parent");
-          g2.push(ch);
-        }
-      }
-      const gm=g2.filter(p=>p.g==="m"&&p.birth<=2002),gf=g2.filter(p=>p.g==="f"&&p.birth<=2002);
-      let weddings=0;
-      for(const m of gm){
-        if(weddings>=4)break;
-        const w=gf.find(f=>f.clan!==m.clan&&!f.spouse&&Math.abs(f.birth-m.birth)<=6);
-        if(!w)continue;
-        m.spouse=w.id;w.spouse=m.id;w.maiden=w.surname;w.surname=fs(m.surname);
-        link(m,w,"spouse",weddings===3);
-        weddings++;
-      }
-      const pulseP=g2.find(p=>!p.spouse&&p.birth<2000)||g2[0];
-      pulseP.pulse=true;
-      const byId=new Map(people.map(p=>[p.id,p]));
+      const rnd = (() => { let s = 20260726; return () => { s|=0; s=s+0x6D2B79F5|0; let t=Math.imul(s^s>>>15,1|s); t=t+Math.imul(t^t>>>7,61|t)^t; return((t^t>>>14)>>>0)/4294967296; }; })();
+      const YEAR = 2026;
 
       function familyOf(p){
         const s=new Set([p.id]);
@@ -100,8 +79,8 @@ export default function App() {
         if(p.mother!=null)s.add(p.mother);
         if(p.spouse!=null)s.add(p.spouse);
         for(const q of people){
-          if(q.father===p.id||q.mother===p.id)s.add(q.id);            // дети
-          if(q!==p&&q.father!=null&&q.father===p.father)s.add(q.id);  // братья/сёстры
+          if(q.father===p.id||q.mother===p.id)s.add(q.id);
+          if(q!==p&&q.father!=null&&q.father===p.father)s.add(q.id);
         }
         return s;
       }
@@ -115,9 +94,8 @@ export default function App() {
       resize();addEventListener("resize",resize);
 
       for(const p of people){
-        const a=p.clan/CLANS.length*Math.PI*2;
-        p.x=Math.cos(a)*280+(rnd()-.5)*130;
-        p.y=Math.sin(a)*280+(rnd()-.5)*130;
+        p.x=(rnd()-.5)*300;
+        p.y=(rnd()-.5)*300;
         p.ph=rnd()*6.28; p.ph2=rnd()*6.28;
       }
       const motion=!matchMedia("(prefers-reduced-motion:reduce)").matches;
@@ -129,7 +107,7 @@ export default function App() {
         .force("x",d3.forceX(0).strength(.018))
         .force("y",d3.forceY(0).strength(.018))
         .velocityDecay(.55);
-      if(motion)sim.alphaTarget(.03);            // облако никогда не «замерзает» — живое
+      if(motion)sim.alphaTarget(.03);
 
       let tf=d3.zoomIdentity.translate(W/2,H/2).scale(1);
       let hovered=null,selected=null,hier=null;
@@ -143,7 +121,7 @@ export default function App() {
           if(e.type==="wheel")return true;
           if(e.type==="dblclick")return false;
           const pt=d3.pointer(e,cv);
-          return !nodeAt(pt[0],pt[1]);          // пан — только по пустому месту
+          return !nodeAt(pt[0],pt[1]);
         })
         .on("zoom",e=>{tf=e.transform});
       const drag=d3.drag().container(cv).clickDistance(6)
@@ -175,11 +153,12 @@ export default function App() {
         const sibs=people.filter(q=>q!==p&&q.father!=null&&q.father===p.father);
         const cx=p.x,cy=p.y,DX=46,DY=64;
         const targets=new Map();
+        const bsort=(a,b)=>((a.birth||0)-(b.birth||0));
         const row=(arr,y)=>{const w=(arr.length-1)*DX;
           arr.forEach((q,i)=>targets.set(q,[cx-w/2+i*DX,y]))};
         const top=[dad,mom].filter(Boolean);
-        const mid=[...sibs.filter(s=>s.birth<=p.birth),p,...(sp?[sp]:[]),...sibs.filter(s=>s.birth>p.birth)];
-        row(top,cy-DY);row(mid,cy);row(kids.sort((a,b)=>a.birth-b.birth),cy+DY);
+        const mid=[...sibs,p,...(sp?[sp]:[])];
+        row(top,cy-DY);row(mid,cy);row(kids.sort(bsort),cy+DY);
         hier={set,targets};
         sim.alpha(Math.max(sim.alpha(),.3)).restart();
       }
@@ -195,7 +174,6 @@ export default function App() {
       const css=v=>cssCache[v]||(cssCache[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim());
       const colorOf=p=>p.death?css("--gone"):p.g==="m"?css("--male"):css("--female");
 
-      /* мягкие плавающие блики фона */
       const motes=Array.from({length:55},()=>({x:rnd(),y:rnd(),r:rnd()*26+8,vx:(rnd()-.5)*.00006,vy:(rnd()-.5)*.00006,a:rnd()*.05+.03}));
 
       const roundRect=(x,y,w,h,r)=>{ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);
@@ -226,7 +204,7 @@ export default function App() {
       }
 
       function draw(t){
-        if(hier){ // плавно ведём семью к рассчитанным местам ярусов
+        if(hier){
           for(const [q,tg] of hier.targets){
             const fx=q.fx==null?q.x:q.fx, fy=q.fy==null?q.y:q.fy;
             q.fx=fx+(tg[0]-fx)*.1; q.fy=fy+(tg[1]-fy)*.1;
@@ -245,7 +223,6 @@ export default function App() {
           ctx.beginPath();ctx.arc(m.x*W,m.y*H,m.r,0,6.283);ctx.fill();
         }
         ctx.globalAlpha=1;
-        // силуэт двуглавого Эльбруса
         ctx.fillStyle="rgba(150,175,205,.16)";
         ctx.beginPath();ctx.moveTo(0,H);ctx.lineTo(0,H*.87);ctx.lineTo(W*.30,H*.80);
         ctx.lineTo(W*.42,H*.68);ctx.lineTo(W*.50,H*.76);ctx.lineTo(W*.58,H*.66);
@@ -263,41 +240,19 @@ export default function App() {
         const focus=selected||hovered;
         const fam=focus?familyOf(focus):null;
 
-        // нити
         for(const l of links){
           const [x1,y1]=P.get(l.source.id),[x2,y2]=P.get(l.target.id);
           const inFam=fam&&fam.has(l.source.id)&&fam.has(l.target.id);
           const dimmed=fam&&!inFam;
-          if(l.recent){
-            ctx.strokeStyle=css("--gold");ctx.lineWidth=1.7/tf.k+.6;
-            ctx.shadowColor=css("--gold");ctx.shadowBlur=motion?9+4*Math.sin(t/280):9;
-            ctx.setLineDash([5,4]);ctx.lineDashOffset=motion?-t/55:0;
-            ctx.globalAlpha=dimmed?.2:1;
-          }else{
-            ctx.strokeStyle=l.type==="spouse"?"rgba(215,140,60,.45)":css("--thread");
-            ctx.lineWidth=(l.type==="spouse"?1.5:1)/Math.sqrt(tf.k);
-            ctx.shadowBlur=0;ctx.setLineDash([]);
-            ctx.globalAlpha=dimmed?.08:1;
-          }
+          ctx.strokeStyle=l.type==="spouse"?"rgba(215,140,60,.45)":css("--thread");
+          ctx.lineWidth=(l.type==="spouse"?1.5:1)/Math.sqrt(tf.k);
+          ctx.shadowBlur=0;ctx.setLineDash([]);
+          ctx.globalAlpha=dimmed?.08:1;
           ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
         }
         ctx.setLineDash([]);ctx.shadowBlur=0;ctx.globalAlpha=1;
 
-        // пульс — заметный, красный
-        {
-          const [px,py]=P.get(pulseP.id);
-          const ph=motion?(t%1600)/1600:.35;
-          for(let i=0;i<2;i++){
-            const f=(ph+i*.5)%1;
-            ctx.strokeStyle=css("--pulse");
-            ctx.globalAlpha=(1-f)*.55;
-            ctx.lineWidth=1.4/tf.k+.4;
-            ctx.beginPath();ctx.arc(px,py,8+f*32,0,6.283);ctx.stroke();
-          }
-          ctx.globalAlpha=1;
-        }
-
-        const chipMode=Math.min(1,Math.max(0,(tf.k-1.15)/.45)); // 0 — частицы, 1 — чипы
+        const chipMode=Math.min(1,Math.max(0,(tf.k-1.15)/.45));
         const breath=p=>motion?1+.035*Math.sin(t/900+p.ph):1;
 
         for(const p of people){
@@ -306,7 +261,7 @@ export default function App() {
           const dimmed=fam&&!fam.has(p.id);
           ctx.globalAlpha=dimmed?.16:1;
 
-          if(chipMode<1){ // частица
+          if(chipMode<1){
             ctx.globalAlpha*= (1-chipMode)||.001;
             if(!p.death){ctx.shadowColor=c;ctx.shadowBlur=10}
             ctx.fillStyle=c;
@@ -314,7 +269,7 @@ export default function App() {
             ctx.shadowBlur=0;
             ctx.globalAlpha=dimmed?.16:1;
           }
-          if(chipMode>0){ // чип-карточка
+          if(chipMode>0){
             ctx.globalAlpha*=chipMode;
             const w=p.cw*b,h=p.chh*b;
             ctx.shadowColor=p.death?"rgba(90,105,120,.35)":c;
@@ -341,31 +296,24 @@ export default function App() {
 
       /* ================= карточка и поиск ================= */
       const card=document.getElementById("card");
-      const tamgaSvg=(c,color)=>`<svg width="34" height="34" viewBox="0 0 34 34" fill="none"
-        stroke="${color}" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="${TAMGA[c]}"/></svg>`;
 
       function lifeStr(p){
-        return p.death?`${p.birth} — ${p.death} · прожил${p.g==="f"?"а":""} ${p.death-p.birth}`
-                     :`${p.birth} г.р. · ${YEAR-p.birth} лет`;
+        if(p.birth && p.death) return `${p.birth} — ушёл из жизни`;
+        if(p.death) return "ушёл из жизни";
+        if(p.birth) return `${p.birth} г.р. · ${YEAR-p.birth} лет`;
+        return p.g==="f"?"годы жизни неизвестны":"годы жизни неизвестны";
       }
       const relLink=(p,role)=>`<a href="#" data-id="${p.id}">${p.surname} ${p.name} <span>· ${role}</span></a>`;
 
       function select(p){
         selected=p;buildHier(p);
         const ava=document.getElementById("cAva");
-        if(p.photo){ava.className="";ava.style.background=`linear-gradient(135deg,${p.av[0]},${p.av[1]})`;
-          ava.textContent=p.name[0]+p.surname[0]}
-        else{ava.className="noPhoto";ava.style.background="";ava.textContent="👤"}
+        ava.className="noPhoto";ava.style.background="";ava.textContent="👤";
         document.getElementById("cWho").textContent=`${p.surname} ${p.name} ${p.patr||""}`;
         let sub=lifeStr(p);
         if(p.maiden&&p.maiden!==p.surname)sub+=`<br/>в девичестве — ${p.maiden}`;
-        if(p.pulse)sub+=`<br/><span style={{color: 'var(--pulse)', fontWeight: '600'}}>● пульс события — уведомления идут родне до 3-го колена (демо)</span>`;
         document.getElementById("cSub").innerHTML=sub;
-        const rootClan=CLANS[p.clan];
-        document.getElementById("clan").innerHTML=
-          tamgaSvg(p.clan,colorOf(p))+
-          `<div><div class="cn">Род ${rootClan}ых</div><div class="cd">условный знак рода · демо</div></div>`;
+        document.getElementById("clan").innerHTML="";
         let rel="";
         const dad=byId.get(p.father),mom=byId.get(p.mother),sp=byId.get(p.spouse);
         const kids=people.filter(q=>q.father===p.id||q.mother===p.id);
@@ -403,6 +351,8 @@ export default function App() {
         const p=people.find(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q));
         if(p){select(p);flyTo(p);search.blur()}
       });
+    }
+
   }, []);
 
   return (
@@ -417,7 +367,7 @@ export default function App() {
             </svg>
             <div>
             <h1>Пульс <b>Нации</b></h1>
-            <p>версия v4 · все имена, связи и знаки родов вымышлены</p>
+            <p>живой граф народа · данные из базы</p>
             </div>
           </div>
           <div id="searchWrap">
@@ -431,8 +381,6 @@ export default function App() {
           <div className="lg"><span className="dot" style={{background: 'var(--female)', boxShadow: '0 0 6px var(--female)'}}></span>женщины</div>
           <div className="lg"><span className="dot" style={{background: 'var(--gone)'}}></span>ушедшие</div>
           <div className="lg"><span className="seg" style={{background: 'rgba(70,100,140,.5)'}}></span>нить родства</div>
-          <div className="lg"><span className="seg" style={{background: 'var(--gold)', boxShadow: '0 0 6px var(--gold)'}}></span>новая свадьба</div>
-          <div className="lg"><span className="dot" style={{border: '2px solid var(--pulse)', background: 'none'}}></span>пульс события</div>
         </div>
 
         <div className="hud" id="card">
