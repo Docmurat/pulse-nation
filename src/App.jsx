@@ -177,8 +177,8 @@ export default function App() {
       const cssCache={};
       const css=v=>cssCache[v]||(cssCache[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim());
       // Живые — яркие цвета; умершие — «тлеющие» (приглушённые) по полу.
-      const GONE_M="#5B7C99";  // тлеющий синий (муж, ушёл)
-      const GONE_F="#B08A6E";  // тлеющий тёпло-красный/охра (жен, ушла)
+      const GONE_M="#4E86BE";  // тлеющий синий (муж, ушёл) — явно синий, но приглушён
+      const GONE_F="#C2703A";  // тлеющий красно-янтарный (жен, ушла) — явно тёплый
       const colorOf=p=>p.death?(p.g==="m"?GONE_M:GONE_F):(p.g==="m"?css("--male"):css("--female"));
 
       const motes=Array.from({length:55},()=>({x:rnd(),y:rnd(),r:rnd()*26+8,vx:(rnd()-.5)*.00006,vy:(rnd()-.5)*.00006,a:rnd()*.05+.03}));
@@ -294,14 +294,6 @@ export default function App() {
             ctx.font="3.4px 'Segoe UI'";
             ctx.fillStyle=p.death?"#93A0B0":"#66788C";
             ctx.fillText(p.surname,x-w/2+12,y+2.9);
-            // полумесяц для ушедших (уважительно, без креста)
-            if(p.death){
-              const mx=x+w/2-5, my=y-h/2+4.5, mr=2.2;
-              ctx.fillStyle=p.g==="m"?GONE_M:GONE_F;
-              ctx.beginPath();ctx.arc(mx,my,mr,0,6.283);ctx.fill();
-              ctx.fillStyle=p.death?"#E6EAEF":"#fff";
-              ctx.beginPath();ctx.arc(mx+mr*0.55,my-mr*0.25,mr*0.85,0,6.283);ctx.fill();
-            }
           }
           ctx.globalAlpha=1;
         }
@@ -320,8 +312,25 @@ export default function App() {
       }
       const relLink=(p,role)=>`<a href="#" data-id="${p.id}">${p.surname} ${p.name} <span>· ${role}</span></a>`;
 
+      // Плавно подвести камеру так, чтобы ярусы семьи оказались в центре
+      // экрана и заняли его почти целиком.
+      function centerFamily(){
+        if(!hier)return;
+        let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
+        for(const tg of hier.targets.values()){
+          if(tg[0]<minX)minX=tg[0]; if(tg[0]>maxX)maxX=tg[0];
+          if(tg[1]<minY)minY=tg[1]; if(tg[1]>maxY)maxY=tg[1];
+        }
+        const padX=90,padY=70;                       // запас под ширину чипов и HUD
+        const w=maxX-minX+padX*2, h=maxY-minY+padY*2;
+        const k=Math.min(4,Math.max(1.7,Math.min(W/w,H/h))); // не мельче чипов, не слишком близко
+        const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+        d3.select(cv).transition().duration(900).ease(d3.easeCubicInOut)
+          .call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-cx,-cy));
+      }
+
       function select(p){
-        selected=p;buildHier(p);
+        selected=p;buildHier(p);centerFamily();
         const ava=document.getElementById("cAva");
         ava.className="noPhoto";ava.style.background="";ava.textContent="👤";
         document.getElementById("cWho").textContent=`${p.surname} ${p.name} ${p.patr||""}`;
@@ -358,15 +367,10 @@ export default function App() {
       card.addEventListener("click",e=>{
         const a=e.target.closest("a[data-id]");
         if(!a)return;e.preventDefault();
-        const p=byId.get(+a.dataset.id);select(p);flyTo(p);
+        const p=byId.get(+a.dataset.id);select(p);
       });
       document.getElementById("closeCard").onclick=deselect;
 
-      function flyTo(p){
-        const k=Math.max(tf.k,2.2);
-        d3.select(cv).transition().duration(900).ease(d3.easeCubicInOut)
-          .call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-p.x,-p.y));
-      }
       const search=document.getElementById("search"),hint=document.getElementById("hint");
       search.addEventListener("input",()=>{
         const q=search.value.trim().toLowerCase();
@@ -378,7 +382,7 @@ export default function App() {
         if(e.key!=="Enter")return;
         const q=search.value.trim().toLowerCase();
         const p=people.find(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q));
-        if(p){select(p);flyTo(p);search.blur()}
+        if(p){select(p);search.blur()}
       });
     }
 
@@ -408,19 +412,12 @@ export default function App() {
         <div className="hud" id="legend">
           <div className="lg"><span className="dot" style={{background: 'var(--male)', boxShadow: '0 0 6px var(--male)'}}></span>мужчины</div>
           <div className="lg"><span className="dot" style={{background: 'var(--female)', boxShadow: '0 0 6px var(--female)'}}></span>женщины</div>
-          <div className="lg"><span className="dot" style={{background: '#5B7C99'}}></span>ушедший ☾ (муж)</div>
-          <div className="lg"><span className="dot" style={{background: '#B08A6E'}}></span>ушедшая ☾ (жен)</div>
+          <div className="lg"><span className="dot" style={{background: '#4E86BE'}}></span>ушедший (муж)</div>
+          <div className="lg"><span className="dot" style={{background: '#C2703A'}}></span>ушедшая (жен)</div>
           <div className="lg"><span className="seg" style={{background: 'rgba(70,100,140,.5)'}}></span>нить родства</div>
         </div>
 
         <div className="hud" id="card">
-          <svg id="orn" height="10" width="100%" preserveAspectRatio="none">
-            <defs><pattern id="rh" width="16" height="10" patternUnits="userSpaceOnUse">
-              <path d="M8 1.5 L13.5 5 L8 8.5 L2.5 5 Z" fill="none" stroke="rgba(232,134,47,.5)" strokeWidth="1"/>
-              <circle cx="8" cy="5" r=".8" fill="rgba(30,159,224,.5)"/>
-            </pattern></defs>
-            <rect width="100%" height="10" fill="url(#rh)"/>
-          </svg>
           <button id="closeCard">✕</button>
           <div id="cHead">
             <div id="cAva"></div>
