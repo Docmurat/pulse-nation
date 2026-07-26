@@ -1,122 +1,461 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useRef } from "react";
+import * as d3 from "d3";
+import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const canvasRef = useRef(null);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    // защита от повторного запуска в StrictMode (React в dev вызывает эффект дважды)
+    if (startedRef.current) return;
+    startedRef.current = true;
+
+      /* ================= данные (вымышленные) ================= */
+      function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);
+        t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+      const rnd=mulberry32(20260726);
+      const ri=n=>Math.floor(rnd()*n);
+      const pick=a=>a[ri(a.length)];
+
+      const CLANS=["Боташев","Урусов","Байрамуков","Хубиев","Текеев","Аджиев"];
+      /* условные знаки родов в стиле тамги — придуманы для демо */
+      const TAMGA=[
+        "M17 5a7 7 0 1 0 .01 0 M17 19v10",
+        "M9 29V13 M17 29V7 M25 29V13 M9 13q8-7 16 0",
+        "M23 8a9 9 0 1 0 0 18 M23 14a4 4 0 1 1 0 6",
+        "M8 8h18 M11 8v20 M23 8v20 M11 20h12",
+        "M17 6l10 11-10 11L7 17Z M17 12v10",
+        "M8 11q9-8 9 6t9 6 M12 27h10"
+      ];
+      const MN=["Мурат","Аслан","Азамат","Казбек","Хасан","Умар","Ислам","Расул","Магомет","Солтан","Артур","Тимур","Рустам","Марат","Ахмат","Осман"];
+      const FN=["Фатима","Мадина","Амина","Лейла","Залина","Диана","Асият","Зухра","Лаура","Марьям","Джамиля","Алина","Танзиля","Аминат"];
+      const fs=s=>s+"а";
+      const patr=(f,g)=>f? f.name+(g==="m"?"ович":"овна") : "";
+      const AVA=[["#38B6E8","#1F7FD0"],["#F2A25E","#E07A2C"],["#7BC97F","#3F9C57"],["#B08CE0","#7C5BC7"],["#F08CA0","#D65B7A"]];
+
+      const people=[],links=[];
+      let seq=0;
+      function addP(o){o.id=seq++;o.photo=rnd()<0.55;o.av=pick(AVA);people.push(o);return o}
+      function link(a,b,type,recent){links.push({source:a.id,target:b.id,type,recent:!!recent})}
+
+      const YEAR=2026;
+      const g1=[];
+      for(let c=0;c<CLANS.length;c++){
+        const fb=1926+ri(8);
+        const dad=addP({surname:CLANS[c],name:pick(MN),g:"m",clan:c,birth:fb,death:1992+ri(24),gen:0});
+        dad.patr=pick(MN)+"ович";
+        const mc=(c+1)%CLANS.length;
+        const mom=addP({surname:fs(CLANS[c]),maiden:fs(CLANS[mc]),name:pick(FN),g:"f",clan:c,
+          birth:fb+2+ri(4),death:1998+ri(24),gen:0});
+        mom.patr=pick(MN)+"овна";
+        link(dad,mom,"spouse");
+        const n=3+(c%2);
+        for(let k=0;k<n;k++){
+          const g=rnd()<0.5?"m":"f";
+          const ch=addP({surname:g==="m"?CLANS[c]:fs(CLANS[c]),name:g==="m"?pick(MN):pick(FN),
+            g,clan:c,birth:1950+c*2+k*4+ri(3),death:null,gen:1,father:dad.id,mother:mom.id});
+          ch.patr=patr(dad,g);
+          link(dad,ch,"parent");link(mom,ch,"parent");
+          g1.push(ch);
+        }
+      }
+      g1[2].death=2014+ri(10); g1[9].death=2010+ri(10);
+
+      const g2=[];
+      const brides=g1.filter(p=>p.g==="f");
+      for(const groom of g1.filter(p=>p.g==="m")){
+        const bride=brides.find(b=>b.clan!==groom.clan&&!b.spouse);
+        if(!bride)continue;
+        groom.spouse=bride.id;bride.spouse=groom.id;
+        bride.maiden=bride.surname;bride.surname=fs(groom.surname);bride.clan=groom.clan;
+        link(groom,bride,"spouse");
+        const kids=2+ri(2),base=Math.max(groom.birth,bride.birth)+22;
+        for(let k=0;k<kids;k++){
+          const g=rnd()<0.5?"m":"f";
+          const ch=addP({surname:g==="m"?groom.surname:fs(groom.surname),name:g==="m"?pick(MN):pick(FN),
+            g,clan:groom.clan,birth:base+k*3+ri(3),death:null,gen:2,father:groom.id,mother:bride.id});
+          ch.patr=patr(groom,g);
+          link(groom,ch,"parent");link(bride,ch,"parent");
+          g2.push(ch);
+        }
+      }
+      const gm=g2.filter(p=>p.g==="m"&&p.birth<=2002),gf=g2.filter(p=>p.g==="f"&&p.birth<=2002);
+      let weddings=0;
+      for(const m of gm){
+        if(weddings>=4)break;
+        const w=gf.find(f=>f.clan!==m.clan&&!f.spouse&&Math.abs(f.birth-m.birth)<=6);
+        if(!w)continue;
+        m.spouse=w.id;w.spouse=m.id;w.maiden=w.surname;w.surname=fs(m.surname);
+        link(m,w,"spouse",weddings===3);
+        weddings++;
+      }
+      const pulseP=g2.find(p=>!p.spouse&&p.birth<2000)||g2[0];
+      pulseP.pulse=true;
+      const byId=new Map(people.map(p=>[p.id,p]));
+
+      function familyOf(p){
+        const s=new Set([p.id]);
+        if(p.father!=null)s.add(p.father);
+        if(p.mother!=null)s.add(p.mother);
+        if(p.spouse!=null)s.add(p.spouse);
+        for(const q of people){
+          if(q.father===p.id||q.mother===p.id)s.add(q.id);            // дети
+          if(q!==p&&q.father!=null&&q.father===p.father)s.add(q.id);  // братья/сёстры
+        }
+        return s;
+      }
+
+      /* ================= холст, силы, движение ================= */
+      const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
+      const dpr=Math.min(window.devicePixelRatio||1,2);
+      let W=0,H=0;
+      function resize(){W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr;
+        cv.style.width=W+"px";cv.style.height=H+"px"}
+      resize();addEventListener("resize",resize);
+
+      for(const p of people){
+        const a=p.clan/CLANS.length*Math.PI*2;
+        p.x=Math.cos(a)*280+(rnd()-.5)*130;
+        p.y=Math.sin(a)*280+(rnd()-.5)*130;
+        p.ph=rnd()*6.28; p.ph2=rnd()*6.28;
+      }
+      const motion=!matchMedia("(prefers-reduced-motion:reduce)").matches;
+      const sim=d3.forceSimulation(people)
+        .force("link",d3.forceLink(links).id(d=>d.id)
+          .distance(l=>l.type==="spouse"?34:60).strength(l=>l.type==="spouse"?1:.5))
+        .force("charge",d3.forceManyBody().strength(-120))
+        .force("collide",d3.forceCollide(15))
+        .force("x",d3.forceX(0).strength(.018))
+        .force("y",d3.forceY(0).strength(.018))
+        .velocityDecay(.55);
+      if(motion)sim.alphaTarget(.03);            // облако никогда не «замерзает» — живое
+
+      let tf=d3.zoomIdentity.translate(W/2,H/2).scale(1);
+      let hovered=null,selected=null,hier=null;
+
+      function nodeAt(mx,my){
+        const [x,y]=tf.invert([mx,my]);
+        return sim.find(x,y,20/tf.k);
+      }
+      const zoom=d3.zoom().scaleExtent([.25,8])
+        .filter(e=>{
+          if(e.type==="wheel")return true;
+          if(e.type==="dblclick")return false;
+          const pt=d3.pointer(e,cv);
+          return !nodeAt(pt[0],pt[1]);          // пан — только по пустому месту
+        })
+        .on("zoom",e=>{tf=e.transform});
+      const drag=d3.drag().container(cv).clickDistance(6)
+        .subject(e=>nodeAt(e.x,e.y))
+        .on("start",e=>{if(!motion)sim.alphaTarget(.25).restart();e.subject._pin=e.subject.fx!=null})
+        .on("drag",e=>{const pt=d3.pointer(e.sourceEvent,cv);const[x,y]=tf.invert(pt);
+          e.subject.fx=x;e.subject.fy=y;
+          sim.alpha(Math.max(sim.alpha(),.25))})
+        .on("end",e=>{if(!motion)sim.alphaTarget(0);
+          if(!e.subject._pin&&!(hier&&hier.set.has(e.subject.id))){e.subject.fx=null;e.subject.fy=null}});
+      d3.select(cv).call(drag).call(zoom).call(zoom.transform,tf);
+
+      cv.addEventListener("mousemove",e=>{
+        hovered=nodeAt(e.offsetX,e.offsetY)||null;
+        cv.style.cursor=hovered?"pointer":"grab";
+      });
+      cv.addEventListener("click",e=>{
+        if(e.defaultPrevented)return;
+        const p=nodeAt(e.offsetX,e.offsetY);
+        if(p)select(p);else deselect();
+      });
+
+      /* ---- иерархия семьи: три яруса сверху вниз ---- */
+      function buildHier(p){
+        clearHier();
+        const set=familyOf(p);
+        const dad=byId.get(p.father),mom=byId.get(p.mother),sp=byId.get(p.spouse);
+        const kids=people.filter(q=>q.father===p.id||q.mother===p.id);
+        const sibs=people.filter(q=>q!==p&&q.father!=null&&q.father===p.father);
+        const cx=p.x,cy=p.y,DX=46,DY=64;
+        const targets=new Map();
+        const row=(arr,y)=>{const w=(arr.length-1)*DX;
+          arr.forEach((q,i)=>targets.set(q,[cx-w/2+i*DX,y]))};
+        const top=[dad,mom].filter(Boolean);
+        const mid=[...sibs.filter(s=>s.birth<=p.birth),p,...(sp?[sp]:[]),...sibs.filter(s=>s.birth>p.birth)];
+        row(top,cy-DY);row(mid,cy);row(kids.sort((a,b)=>a.birth-b.birth),cy+DY);
+        hier={set,targets};
+        sim.alpha(Math.max(sim.alpha(),.3)).restart();
+      }
+      function clearHier(){
+        if(!hier)return;
+        for(const q of hier.targets.keys()){q.fx=null;q.fy=null}
+        hier=null;
+        sim.alpha(Math.max(sim.alpha(),.3)).restart();
+      }
+
+      /* ================= отрисовка ================= */
+      const cssCache={};
+      const css=v=>cssCache[v]||(cssCache[v]=getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+      const colorOf=p=>p.death?css("--gone"):p.g==="m"?css("--male"):css("--female");
+
+      /* мягкие плавающие блики фона */
+      const motes=Array.from({length:55},()=>({x:rnd(),y:rnd(),r:rnd()*26+8,vx:(rnd()-.5)*.00006,vy:(rnd()-.5)*.00006,a:rnd()*.05+.03}));
+
+      const roundRect=(x,y,w,h,r)=>{ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);
+        ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()};
+
+      ctx.font="600 3.7px 'Segoe UI'";
+      for(const p of people){
+        p.tw=Math.max(ctx.measureText(p.name).width,ctx.measureText(p.surname).width);
+        p.cw=Math.max(26,p.tw+15); p.chh=13.5;
+      }
+
+      function drawAvatar(p,x,y,r){
+        if(p.photo){
+          const g=ctx.createLinearGradient(x-r,y-r,x+r,y+r);
+          g.addColorStop(0,p.av[0]);g.addColorStop(1,p.av[1]);
+          ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,6.283);ctx.fill();
+          ctx.fillStyle="rgba(255,255,255,.9)";ctx.font=`600 ${r*.95}px 'Segoe UI'`;
+          ctx.textAlign="center";ctx.textBaseline="middle";
+          ctx.fillText(p.name[0],x,y+r*.06);
+        }else{
+          ctx.fillStyle="#D5DEE8";ctx.beginPath();ctx.arc(x,y,r,0,6.283);ctx.fill();
+          ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,6.283);ctx.clip();
+          ctx.fillStyle="#A7B4C4";
+          ctx.beginPath();ctx.arc(x,y-r*.28,r*.38,0,6.283);ctx.fill();
+          ctx.beginPath();ctx.arc(x,y+r*.95,r*.72,0,6.283);ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      function draw(t){
+        if(hier){ // плавно ведём семью к рассчитанным местам ярусов
+          for(const [q,tg] of hier.targets){
+            const fx=q.fx==null?q.x:q.fx, fy=q.fy==null?q.y:q.fy;
+            q.fx=fx+(tg[0]-fx)*.1; q.fy=fy+(tg[1]-fy)*.1;
+          }
+          if(sim.alpha()<.08)sim.alpha(.08);
+          sim.restart();
+        }
+        ctx.setTransform(dpr,0,0,dpr,0,0);
+        const grd=ctx.createLinearGradient(0,0,0,H);
+        grd.addColorStop(0,css("--bg1"));grd.addColorStop(1,css("--bg2"));
+        ctx.fillStyle=grd;ctx.fillRect(0,0,W,H);
+        for(const m of motes){
+          if(motion){m.x=(m.x+m.vx*16+1)%1;m.y=(m.y+m.vy*16+1)%1}
+          ctx.globalAlpha=m.a+(motion?.02*Math.sin(t/1800+m.r):0);
+          ctx.fillStyle="#FFFFFF";
+          ctx.beginPath();ctx.arc(m.x*W,m.y*H,m.r,0,6.283);ctx.fill();
+        }
+        ctx.globalAlpha=1;
+        // силуэт двуглавого Эльбруса
+        ctx.fillStyle="rgba(150,175,205,.16)";
+        ctx.beginPath();ctx.moveTo(0,H);ctx.lineTo(0,H*.87);ctx.lineTo(W*.30,H*.80);
+        ctx.lineTo(W*.42,H*.68);ctx.lineTo(W*.50,H*.76);ctx.lineTo(W*.58,H*.66);
+        ctx.lineTo(W*.72,H*.82);ctx.lineTo(W,H*.88);ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+        ctx.fillStyle="rgba(170,195,225,.20)";
+        ctx.beginPath();ctx.moveTo(0,H);ctx.lineTo(0,H*.93);ctx.lineTo(W*.2,H*.89);
+        ctx.lineTo(W*.45,H*.94);ctx.lineTo(W*.75,H*.885);ctx.lineTo(W,H*.93);
+        ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+        ctx.translate(tf.x,tf.y);ctx.scale(tf.k,tf.k);
+
+        const wob=p=>motion&&!(hier&&hier.set.has(p.id))&&p.fx==null
+          ?[p.x+1.6*Math.sin(t/1300+p.ph),p.y+1.6*Math.cos(t/1600+p.ph2)]:[p.x,p.y];
+        const P=new Map(people.map(p=>[p.id,wob(p)]));
+
+        const focus=selected||hovered;
+        const fam=focus?familyOf(focus):null;
+
+        // нити
+        for(const l of links){
+          const [x1,y1]=P.get(l.source.id),[x2,y2]=P.get(l.target.id);
+          const inFam=fam&&fam.has(l.source.id)&&fam.has(l.target.id);
+          const dimmed=fam&&!inFam;
+          if(l.recent){
+            ctx.strokeStyle=css("--gold");ctx.lineWidth=1.7/tf.k+.6;
+            ctx.shadowColor=css("--gold");ctx.shadowBlur=motion?9+4*Math.sin(t/280):9;
+            ctx.setLineDash([5,4]);ctx.lineDashOffset=motion?-t/55:0;
+            ctx.globalAlpha=dimmed?.2:1;
+          }else{
+            ctx.strokeStyle=l.type==="spouse"?"rgba(215,140,60,.45)":css("--thread");
+            ctx.lineWidth=(l.type==="spouse"?1.5:1)/Math.sqrt(tf.k);
+            ctx.shadowBlur=0;ctx.setLineDash([]);
+            ctx.globalAlpha=dimmed?.08:1;
+          }
+          ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+        }
+        ctx.setLineDash([]);ctx.shadowBlur=0;ctx.globalAlpha=1;
+
+        // пульс — заметный, красный
+        {
+          const [px,py]=P.get(pulseP.id);
+          const ph=motion?(t%1600)/1600:.35;
+          for(let i=0;i<2;i++){
+            const f=(ph+i*.5)%1;
+            ctx.strokeStyle=css("--pulse");
+            ctx.globalAlpha=(1-f)*.55;
+            ctx.lineWidth=1.4/tf.k+.4;
+            ctx.beginPath();ctx.arc(px,py,8+f*32,0,6.283);ctx.stroke();
+          }
+          ctx.globalAlpha=1;
+        }
+
+        const chipMode=Math.min(1,Math.max(0,(tf.k-1.15)/.45)); // 0 — частицы, 1 — чипы
+        const breath=p=>motion?1+.035*Math.sin(t/900+p.ph):1;
+
+        for(const p of people){
+          const [x,y]=P.get(p.id);
+          const c=colorOf(p),b=breath(p);
+          const dimmed=fam&&!fam.has(p.id);
+          ctx.globalAlpha=dimmed?.16:1;
+
+          if(chipMode<1){ // частица
+            ctx.globalAlpha*= (1-chipMode)||.001;
+            if(!p.death){ctx.shadowColor=c;ctx.shadowBlur=10}
+            ctx.fillStyle=c;
+            roundRect(x-4.5*b,y-4.5*b,9*b,9*b,2.8);ctx.fill();
+            ctx.shadowBlur=0;
+            ctx.globalAlpha=dimmed?.16:1;
+          }
+          if(chipMode>0){ // чип-карточка
+            ctx.globalAlpha*=chipMode;
+            const w=p.cw*b,h=p.chh*b;
+            ctx.shadowColor=p.death?"rgba(90,105,120,.35)":c;
+            ctx.shadowBlur=p===focus?16:9;
+            ctx.fillStyle=p.death?"#E6EAEF":"rgba(255,255,255,.96)";
+            roundRect(x-w/2,y-h/2,w,h,4);ctx.fill();
+            ctx.shadowBlur=0;
+            ctx.strokeStyle=c;ctx.lineWidth=(p===selected||p===hovered?1.6:.9)/Math.sqrt(tf.k);
+            roundRect(x-w/2,y-h/2,w,h,4);ctx.stroke();
+            drawAvatar(p,x-w/2+6.4,y,3.9);
+            ctx.fillStyle=p.death?"#7A8798":"#22303F";
+            ctx.textAlign="left";ctx.textBaseline="middle";
+            ctx.font="600 3.7px 'Segoe UI'";
+            ctx.fillText(p.name,x-w/2+12,y-2.5);
+            ctx.font="3.4px 'Segoe UI'";
+            ctx.fillStyle=p.death?"#93A0B0":"#66788C";
+            ctx.fillText(p.surname,x-w/2+12,y+2.9);
+          }
+          ctx.globalAlpha=1;
+        }
+        requestAnimationFrame(draw);
+      }
+      requestAnimationFrame(draw);
+
+      /* ================= карточка и поиск ================= */
+      const card=document.getElementById("card");
+      const tamgaSvg=(c,color)=>`<svg width="34" height="34" viewBox="0 0 34 34" fill="none"
+        stroke="${color}" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="${TAMGA[c]}"/></svg>`;
+
+      function lifeStr(p){
+        return p.death?`${p.birth} — ${p.death} · прожил${p.g==="f"?"а":""} ${p.death-p.birth}`
+                     :`${p.birth} г.р. · ${YEAR-p.birth} лет`;
+      }
+      const relLink=(p,role)=>`<a href="#" data-id="${p.id}">${p.surname} ${p.name} <span>· ${role}</span></a>`;
+
+      function select(p){
+        selected=p;buildHier(p);
+        const ava=document.getElementById("cAva");
+        if(p.photo){ava.className="";ava.style.background=`linear-gradient(135deg,${p.av[0]},${p.av[1]})`;
+          ava.textContent=p.name[0]+p.surname[0]}
+        else{ava.className="noPhoto";ava.style.background="";ava.textContent="👤"}
+        document.getElementById("cWho").textContent=`${p.surname} ${p.name} ${p.patr||""}`;
+        let sub=lifeStr(p);
+        if(p.maiden&&p.maiden!==p.surname)sub+=`<br/>в девичестве — ${p.maiden}`;
+        if(p.pulse)sub+=`<br/><span style={{color: 'var(--pulse)', fontWeight: '600'}}>● пульс события — уведомления идут родне до 3-го колена (демо)</span>`;
+        document.getElementById("cSub").innerHTML=sub;
+        const rootClan=CLANS[p.clan];
+        document.getElementById("clan").innerHTML=
+          tamgaSvg(p.clan,colorOf(p))+
+          `<div><div class="cn">Род ${rootClan}ых</div><div class="cd">условный знак рода · демо</div></div>`;
+        let rel="";
+        const dad=byId.get(p.father),mom=byId.get(p.mother),sp=byId.get(p.spouse);
+        const kids=people.filter(q=>q.father===p.id||q.mother===p.id);
+        const sibs=people.filter(q=>q!==p&&q.father!=null&&q.father===p.father);
+        if(dad||mom){rel+="<h4>Родители</h4>";if(dad)rel+=relLink(dad,"отец");if(mom)rel+=relLink(mom,"мать")}
+        if(sp)rel+="<h4>Супруг"+(p.g==="m"?"а":"")+"</h4>"+relLink(sp,"брак");
+        if(kids.length)rel+="<h4>Дети</h4>"+kids.map(k=>relLink(k,k.g==="m"?"сын":"дочь")).join("");
+        if(sibs.length)rel+="<h4>Братья и сёстры</h4>"+sibs.map(s=>relLink(s,s.g==="m"?"брат":"сестра")).join("");
+        document.getElementById("cRel").innerHTML=rel;
+        card.classList.add("on");
+      }
+      function deselect(){selected=null;clearHier();card.classList.remove("on")}
+      card.addEventListener("click",e=>{
+        const a=e.target.closest("a[data-id]");
+        if(!a)return;e.preventDefault();
+        const p=byId.get(+a.dataset.id);select(p);flyTo(p);
+      });
+      document.getElementById("closeCard").onclick=deselect;
+
+      function flyTo(p){
+        const k=Math.max(tf.k,2.2);
+        d3.select(cv).transition().duration(900).ease(d3.easeCubicInOut)
+          .call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-p.x,-p.y));
+      }
+      const search=document.getElementById("search"),hint=document.getElementById("hint");
+      search.addEventListener("input",()=>{
+        const q=search.value.trim().toLowerCase();
+        if(q.length<2){hint.textContent="";return}
+        const n=people.filter(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q)).length;
+        hint.textContent=n?`найдено: ${n} — Enter, чтобы перейти`:"никого не найдено";
+      });
+      search.addEventListener("keydown",e=>{
+        if(e.key!=="Enter")return;
+        const q=search.value.trim().toLowerCase();
+        const p=people.find(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q));
+        if(p){select(p);flyTo(p);search.blur()}
+      });
+  }, []);
 
   return (
     <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+      <canvas id="cv" ref={canvasRef}></canvas>
+        <div className="hud" id="top">
+          <div className="brand">
+            <svg className="emblem" width="36" height="36" viewBox="0 0 34 34" fill="none" stroke="#1E9FE0" strokeWidth="1.7">
+              <circle cx="17" cy="17" r="14.6"/>
+              <path d="M17 5.6 28.4 17 17 28.4 5.6 17Z"/>
+              <circle cx="17" cy="17" r="1.9" fill="#1E9FE0" stroke="none"/>
+            </svg>
+            <div>
+            <h1>Пульс <b>Нации</b></h1>
+            <p>версия v4 · все имена, связи и знаки родов вымышлены</p>
+            </div>
+          </div>
+          <div id="searchWrap">
+            <input id="search" type="text" placeholder="Найти человека… (Enter)" />
+            <div id="hint"></div>
+          </div>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
+
+        <div className="hud" id="legend">
+          <div className="lg"><span className="dot" style={{background: 'var(--male)', boxShadow: '0 0 6px var(--male)'}}></span>мужчины</div>
+          <div className="lg"><span className="dot" style={{background: 'var(--female)', boxShadow: '0 0 6px var(--female)'}}></span>женщины</div>
+          <div className="lg"><span className="dot" style={{background: 'var(--gone)'}}></span>ушедшие</div>
+          <div className="lg"><span className="seg" style={{background: 'rgba(70,100,140,.5)'}}></span>нить родства</div>
+          <div className="lg"><span className="seg" style={{background: 'var(--gold)', boxShadow: '0 0 6px var(--gold)'}}></span>новая свадьба</div>
+          <div className="lg"><span className="dot" style={{border: '2px solid var(--pulse)', background: 'none'}}></span>пульс события</div>
         </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
+        <div className="hud" id="card">
+          <svg id="orn" height="10" width="100%" preserveAspectRatio="none">
+            <defs><pattern id="rh" width="16" height="10" patternUnits="userSpaceOnUse">
+              <path d="M8 1.5 L13.5 5 L8 8.5 L2.5 5 Z" fill="none" stroke="rgba(232,134,47,.5)" strokeWidth="1"/>
+              <circle cx="8" cy="5" r=".8" fill="rgba(30,159,224,.5)"/>
+            </pattern></defs>
+            <rect width="100%" height="10" fill="url(#rh)"/>
           </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          <button id="closeCard">✕</button>
+          <div id="cHead">
+            <div id="cAva"></div>
+            <div>
+              <div className="who" id="cWho"></div>
+            </div>
+          </div>
+          <div className="sub" id="cSub"></div>
+          <div id="clan"></div>
+          <div id="cRel"></div>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
+        <div className="hud" id="note">колесо — зум · пустое место — перемещение · частицу можно таскать<br/>клик по человеку — карточка и построение семьи по ярусам</div>
     </>
-  )
+  );
 }
-
-export default App
