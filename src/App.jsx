@@ -43,20 +43,26 @@ export default function App() {
 
       // Превращаем записи из базы в формат, который понимает космос.
       const AVA=[["#38B6E8","#1F7FD0"],["#F2A25E","#E07A2C"],["#7BC97F","#3F9C57"],["#B08CE0","#7C5BC7"],["#F08CA0","#D65B7A"]];
+      // пол может быть записан по-разному (m/f, м/ж) — приводим к одному виду
+      const normG=v=>{v=(v||"").toString().trim().toLowerCase();
+        if(v==="f"||v==="ж"||v==="жен")return"f";
+        if(v==="m"||v==="м"||v==="муж")return"m";
+        return v||null};
       const people = raw.people.map((r, i) => ({
         id: r.id,
         surname: r.last_name,
         name: r.first_name,
         patr: r.patronymic || "",
         maiden: r.maiden_name || null,
-        g: r.gender,                       // 'm' / 'f'
+        g: normG(r.gender),                // 'm' / 'f'
         death: r.is_alive ? null : 1,      // не жив → помечаем «ушедший»
         birth: r.birth_year || null,
+        age: r.age ?? null,          // точный возраст с сервера (по полной дате)
         dyear: r.death_year || null,
         clan: r.clan_id || 0,
         photo: false,
         av: AVA[i % AVA.length],
-        father: null, mother: null, spouse: null,
+        parents: [], spouse: null,         // родителей может быть сколько угодно записано
       }));
       const byId = new Map(people.map(p => [p.id, p]));
 
@@ -67,8 +73,7 @@ export default function App() {
         if (!a || !b) continue;
         if (rel.kind === "parent") {
           links.push({ source: a.id, target: b.id, type: "parent", recent: false });
-          // b — ребёнок; проставим ему родителя по полу
-          if (a.g === "f") b.mother = a.id; else b.father = a.id;
+          b.parents.push(a.id);            // b — ребёнок; родитель в список
         } else if (rel.kind === "spouse") {
           links.push({ source: a.id, target: b.id, type: "spouse", recent: false });
           a.spouse = b.id; b.spouse = a.id;
@@ -78,15 +83,17 @@ export default function App() {
       const rnd = (() => { let s = 20260726; return () => { s|=0; s=s+0x6D2B79F5|0; let t=Math.imul(s^s>>>15,1|s); t=t+Math.imul(t^t>>>7,61|t)^t; return((t^t>>>14)>>>0)/4294967296; }; })();
       const YEAR = 2026;
 
+      const parentsOf=p=>p.parents.map(id=>byId.get(id)).filter(Boolean)
+        .sort((a,b)=>(a.g==="m"?0:1)-(b.g==="m"?0:1)); // отец слева, мать справа
+      const kidsOf=p=>people.filter(q=>q.parents.includes(p.id));
+      const sibsOf=p=>people.filter(q=>q!==p&&q.parents.some(id=>p.parents.includes(id)));
+
       function familyOf(p){
         const s=new Set([p.id]);
-        if(p.father!=null)s.add(p.father);
-        if(p.mother!=null)s.add(p.mother);
+        for(const id of p.parents)s.add(id);      // ВСЕ родители, брак не важен
         if(p.spouse!=null)s.add(p.spouse);
-        for(const q of people){
-          if(q.father===p.id||q.mother===p.id)s.add(q.id);
-          if(q!==p&&q.father!=null&&q.father===p.father)s.add(q.id);
-        }
+        for(const q of kidsOf(p))s.add(q.id);     // все дети
+        for(const q of sibsOf(p))s.add(q.id);     // братья/сёстры через любого общего родителя
         return s;
       }
 
@@ -153,15 +160,15 @@ export default function App() {
       function buildHier(p){
         clearHier();
         const set=familyOf(p);
-        const dad=byId.get(p.father),mom=byId.get(p.mother),sp=byId.get(p.spouse);
-        const kids=people.filter(q=>q.father===p.id||q.mother===p.id);
-        const sibs=people.filter(q=>q!==p&&q.father!=null&&q.father===p.father);
+        const sp=byId.get(p.spouse);
+        const kids=kidsOf(p);
+        const sibs=sibsOf(p);
+        const top=parentsOf(p);
         const cx=p.x,cy=p.y,DX=46,DY=64;
         const targets=new Map();
         const bsort=(a,b)=>((a.birth||0)-(b.birth||0));
         const row=(arr,y)=>{const w=(arr.length-1)*DX;
           arr.forEach((q,i)=>targets.set(q,[cx-w/2+i*DX,y]))};
-        const top=[dad,mom].filter(Boolean);
         const mid=[...sibs,p,...(sp?[sp]:[])];
         row(top,cy-DY);row(mid,cy);row(kids.sort(bsort),cy+DY);
         hier={set,targets};
@@ -313,7 +320,12 @@ export default function App() {
           if(p.birth) return `${p.birth} — ${gone}`;
           return gone;
         }
-        if(p.birth) return `${p.birth} г.р. · ${YEAR-p.birth} лет`;
+        if(p.birth){
+          const n=p.age??(YEAR-p.birth); // точный возраст, если известна полная дата
+          const w=(x=>{const a=x%100,b=x%10;
+            if(a>10&&a<15)return"лет";if(b===1)return"год";if(b>=2&&b<=4)return"года";return"лет"})(n);
+          return `${p.birth} г.р. · ${n} ${w}`;
+        }
         return "годы жизни неизвестны";
       }
       const relLink=(p,role)=>`<a href="#" data-id="${p.id}">${p.surname} ${p.name} <span>· ${role}</span></a>`;
@@ -335,8 +347,23 @@ export default function App() {
           .call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-cx,-cy));
       }
 
+      // «Своя сцена»: человек стоит в ярусах или связан нитью с кем-то из ярусов
+      // (мама детей без брачной нити, племянник и т.п.) — таких кликом не дёргаем.
+      function inCurrentScene(p){
+        if(!hier)return false;
+        for(const q of hier.targets.keys())if(q.id===p.id)return true;
+        for(const l of links){
+          const a=l.source.id,b=l.target.id;
+          if(a!==p.id&&b!==p.id)continue;
+          const other=a===p.id?b:a;
+          for(const q of hier.targets.keys())if(q.id===other)return true;
+        }
+        return false;
+      }
+
       function select(p){
-        selected=p;buildHier(p);centerFamily();
+        selected=p;
+        if(!inCurrentScene(p)){ buildHier(p); centerFamily(); }
         const ava=document.getElementById("cAva");
         ava.className="noPhoto";ava.style.background="";ava.textContent="👤";
         document.getElementById("cWho").textContent=`${p.surname} ${p.name} ${p.patr||""}`;
@@ -345,10 +372,11 @@ export default function App() {
         document.getElementById("cSub").innerHTML=sub;
         document.getElementById("clan").innerHTML="";
         let rel="";
-        const dad=byId.get(p.father),mom=byId.get(p.mother),sp=byId.get(p.spouse);
-        const kids=people.filter(q=>q.father===p.id||q.mother===p.id);
-        const sibs=people.filter(q=>q!==p&&q.father!=null&&q.father===p.father);
-        if(dad||mom){rel+="<h4>Родители</h4>";if(dad)rel+=relLink(dad,"отец");if(mom)rel+=relLink(mom,"мать")}
+        const pars=parentsOf(p),sp=byId.get(p.spouse);
+        const kids=kidsOf(p);
+        const sibs=sibsOf(p);
+        if(pars.length){rel+="<h4>Родители</h4>";
+          for(const q of pars)rel+=relLink(q,q.g==="m"?"отец":q.g==="f"?"мать":"родитель")}
         if(sp)rel+="<h4>Супруг"+(p.g==="m"?"а":"")+"</h4>"+relLink(sp,"брак");
         if(kids.length)rel+="<h4>Дети</h4>"+kids.map(k=>relLink(k,k.g==="m"?"сын":"дочь")).join("");
         if(sibs.length)rel+="<h4>Братья и сёстры</h4>"+sibs.map(s=>relLink(s,s.g==="m"?"брат":"сестра")).join("");
@@ -390,6 +418,14 @@ export default function App() {
         const p=people.find(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q));
         if(p){select(p);search.blur()}
       });
+
+      // «Записка» от формы: только что сохранённую семью выстроить на весь экран
+      const focusId=Number(sessionStorage.getItem("pulse_focus_id")||"");
+      if(focusId){
+        sessionStorage.removeItem("pulse_focus_id");
+        const p=byId.get(focusId);
+        if(p) setTimeout(()=>select(p),700); // даём частицам мгновение разлететься
+      }
     }
 
   }, []);

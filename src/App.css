@@ -165,3 +165,11 @@
   font-size:12.5px;outline:none;font-family:inherit;color:var(--ink)}
 .af-childbox{border-bottom:1px dashed rgba(35,60,90,.1);padding-bottom:8px;margin-bottom:8px}
 .af-cdates{margin-top:5px;margin-bottom:0}
+
+/* плашка кандидатов-дублей */
+.af-cand-parents{color:var(--dim);font-size:12px}
+.af-confirm-row .af-confirm-yes{margin-top:5px}
+.pf-res-dad{color:var(--dim);font-size:12px}
+.af-take-surname{display:flex;align-items:center;gap:7px;margin-top:8px;
+  font-size:12.5px;color:var(--dim);cursor:pointer}
+.af-clan-hint{margin:-8px 0 12px}

@@ -41,7 +41,10 @@ app.get("/api/graph", async (req, res) => {
   try {
     const people = await pool.query(`
       SELECT id, last_name, first_name, patronymic, maiden_name,
-             gender, birth_year, death_year, is_alive, clan_id
+             gender, birth_year, death_year, is_alive, clan_id,
+             CASE WHEN birth_date IS NOT NULL AND is_alive
+                  THEN EXTRACT(YEAR FROM age(birth_date))::int
+             END AS age
       FROM people ORDER BY id
     `);
     const rels = await pool.query(`
@@ -60,12 +63,16 @@ app.get("/api/search", async (req, res) => {
     const q = (req.query.q || "").trim().toLowerCase();
     if (q.length < 1) { res.json([]); return; }
     const r = await pool.query(
-      `SELECT id, last_name, first_name, patronymic, gender, birth_year, is_alive
-       FROM people
-       WHERE lower(first_name) LIKE $1
-          OR lower(last_name) LIKE $1
-          OR lower(last_name || ' ' || first_name) LIKE $1
-       ORDER BY last_name, first_name
+      `SELECT p.id, p.last_name, p.first_name, p.patronymic, p.gender, p.birth_year, p.is_alive,
+              (SELECT f.first_name
+               FROM relationships r JOIN people f ON f.id = r.person_a
+               WHERE r.kind = 'parent' AND r.person_b = p.id AND f.gender = 'm'
+               LIMIT 1) AS father_name
+       FROM people p
+       WHERE lower(p.first_name) LIKE $1
+          OR lower(p.last_name) LIKE $1
+          OR lower(p.last_name || ' ' || p.first_name) LIKE $1
+       ORDER BY p.last_name, p.first_name
        LIMIT 20`,
       [`%${q}%`]
     );
@@ -75,6 +82,64 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
+// ============ СЛОВАРЬ ИСКЛЮЧЕНИЙ ДЛЯ ОТЧЕСТВ ============
+// Имя отца (маленькими буквами) → готовые отчества. Пополнять по мере находок:
+// просто дописать строку по образцу и перезапустить сервер.
+const PATR_EX = {
+  // Русские имена на «-ий» с беглой гласной (общее правило их не берёт):
+  "валерий":  { m: "Валериевич",  f: "Валерьевна"  },  // по решению основателя
+  "юрий":     { m: "Юрьевич",     f: "Юрьевна"     },
+  "василий":  { m: "Васильевич",  f: "Васильевна"  },
+  "григорий": { m: "Григорьевич", f: "Григорьевна" },
+  "анатолий": { m: "Анатольевич", f: "Анатольевна" },
+  "виталий":  { m: "Витальевич",  f: "Витальевна"  },
+  "геннадий": { m: "Геннадьевич", f: "Геннадьевна" },
+  "аркадий":  { m: "Аркадьевич",  f: "Аркадьевна"  },
+  "евгений":  { m: "Евгеньевич",  f: "Евгеньевна"  },
+  "дмитрий":  { m: "Дмитриевич",  f: "Дмитриевна"  },
+  // Карачаевские имена — закреплены явно (общее правило и так их даёт,
+  // но словарь гарантирует, что никакая будущая правка их не сломает):
+  "муссабий": { m: "Муссабиевич", f: "Муссабиевна" },
+  "таубий":   { m: "Таубиевич",   f: "Таубиевна"   },
+  "ханапий":  { m: "Ханапиевич",  f: "Ханапиевна"  },
+  "алий":     { m: "Алиевич",     f: "Алиевна"     },
+  "али":      { m: "Алиевич",     f: "Алиевна"     },
+  "илья":     { m: "Ильич",       f: "Ильинична"   },
+  "лука":     { m: "Лукич",       f: "Лукинична"   },
+  "фома":     { m: "Фомич",       f: "Фоминична"   },
+  "кузьма":   { m: "Кузьмич",     f: "Кузьминична" },
+  "никита":   { m: "Никитич",     f: "Никитична"   },
+  "савва":    { m: "Саввич",      f: "Саввична"    },
+  "лев":      { m: "Львович",     f: "Львовна"     },
+  "павел":    { m: "Павлович",    f: "Павловна"    },
+  "пётр":     { m: "Петрович",    f: "Петровна"    },
+  "петр":     { m: "Петрович",    f: "Петровна"    },
+  "яков":     { m: "Яковлевич",   f: "Яковлевна"   },
+  "михаил":   { m: "Михайлович",  f: "Михайловна"  },
+};
+
+// Имя рода из фамилии: «Курджиев» → «Курджиевы» (нетиповые — как есть)
+function pluralizeSurname(s) {
+  if (!s) return s;
+  return /(ев|ов|ёв|ин|ын)$/i.test(s) ? s + "ы" : s;
+}
+// Мужская основа фамилии: «Курджиевы»/«Курджиева» → «Курджиев» (для склонения)
+function masculinizeSurname(s) {
+  if (!s) return s;
+  const m = s.match(/^(.*(ев|ов|ёв|ин|ын))(а|ы)$/i);
+  return m ? m[1] : s;
+}
+// Женская форма фамилии: Курджиев → Курджиева (только типовые окончания)
+function feminizeSurname(s) {
+  if (!s) return s;
+  if (/(ев|ов|ёв|ин|ын)$/i.test(s)) return s + "а";
+  return s; // нетиповые фамилии не трогаем
+}
+// Корень отчества: Астекович → Астек, Мусса-Хаджиевна → Мусса-Хаджи
+function patrRoot(p) {
+  if (!p) return "";
+  return p.replace(/(овна|евна|ович|евич)$/i, "");
+}
 // Нормализация имени для поиска похожих (Султан≈Солтан, регистр, дефисы)
 function normName(s) {
   if (!s) return "";
@@ -83,12 +148,33 @@ function normName(s) {
     .replace(/о/g, "у")      // Солтан → султан (частая вариативность о/у)
     .replace(/[-\s]+/g, "");
 }
-// Похожи ли имена: точное совпадение нормализованных ИЛИ одно входит в другое
+// Расстояние редактирования: сколько букв заменить/вставить/убрать,
+// чтобы одно слово превратилось в другое (Хосан→Хасан = 1)
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 99; // слишком разной длины — не тратим время
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,                                  // убрать букву
+        cur[j - 1] + 1,                               // вставить букву
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1) // заменить букву
+      );
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+// Похожи ли имена: совпадение нормализованных, вхождение одного в другое,
+// или отличие максимум в одну букву (для имён от 4 букв)
 function similarNames(a, b) {
   const na = normName(a), nb = normName(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
   if (na.length >= 3 && nb.length >= 3 && (na.includes(nb) || nb.includes(na))) return true;
+  if (na.length >= 4 && nb.length >= 4 && na[0] === nb[0] && editDistance(na, nb) <= 1) return true;
   return false;
 }
 
@@ -123,7 +209,7 @@ app.post("/api/family", async (req, res) => {
       }
       // имена детей, которых собираемся добавить
       const newNames = [];
-      for (const g of (data.mothers || [])) for (const c of (g.children || [])) if (c.first_name) newNames.push(c.first_name);
+      for (const g of (data.mothers || [])) for (const c of (g.children || [])) if (c.first_name && !c.existing_id) newNames.push(c.first_name);
       // существующие дети этих родителей
       if (parentIds.length && newNames.length) {
         const ex = await pool.query(
@@ -148,14 +234,38 @@ app.post("/api/family", async (req, res) => {
 
     await client.query("BEGIN"); // всё внесётся целиком или ничего (безопасность)
 
-    // --- определяем/создаём род ---
+    // --- род определяется АВТОМАТИЧЕСКИ (по отцу), поля в форме нет ---
     let clanId = null;
-    if (data.clanName) {
+    let weakClan = true;          // род «со слов», пока не подтверждён фамилией отца
+    let baseSurname = null;       // мужская основа фамилии для наследования
+    let clanNameFinal = null;
+    let existingFatherInfo = null;
+    const surnameManualNorm = masculinizeSurname((data.surnameManual || '').trim()) || null;
+
+    if (data.father && data.father.mode === 'existing' && data.father.id) {
+      const r0 = await client.query(
+        `SELECT first_name, last_name, clan_id FROM people WHERE id = $1`, [data.father.id]);
+      existingFatherInfo = r0.rows[0] || null;
+      if (existingFatherInfo) {
+        if ((existingFatherInfo.last_name || '').trim()) {
+          baseSurname = existingFatherInfo.last_name;
+          weakClan = false;                      // фамилия отца известна из базы
+        }
+        if (existingFatherInfo.clan_id) clanId = existingFatherInfo.clan_id; // род отца — детям
+      }
+    } else if (data.father && data.father.mode === 'new' && (data.father.last_name || '').trim()) {
+      baseSurname = masculinizeSurname(data.father.last_name.trim());
+      weakClan = false;                          // фамилию отца ввели явно
+    }
+    if (!baseSurname) baseSurname = surnameManualNorm; // фамилия «со слов» (weakClan остаётся true)
+
+    if (!clanId && baseSurname) {
+      clanNameFinal = pluralizeSurname(baseSurname);
       const c = await client.query(
         `INSERT INTO clans (name) VALUES ($1)
          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
-        [data.clanName]
+        [clanNameFinal]
       );
       clanId = c.rows[0].id;
     }
@@ -166,12 +276,13 @@ app.post("/api/family", async (req, res) => {
       const byear = p.birth_year || (p.birth_date ? Number(String(p.birth_date).slice(0, 4)) : null);
       const dyear = p.death_year || (p.death_date ? Number(String(p.death_date).slice(0, 4)) : null);
       const r = await client.query(
-        `INSERT INTO people (last_name, first_name, patronymic, gender, is_alive,
-                             birth_year, birth_date, death_year, death_date, clan_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-        [p.last_name || null, p.first_name || null, p.patronymic || null,
+        `INSERT INTO people (last_name, first_name, patronymic, maiden_name, gender, is_alive,
+                             birth_year, birth_date, death_year, death_date, clan_id, clan_unverified)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+        [p.last_name || null, p.first_name || null, p.patronymic || null, p.maiden_name || null,
          p.gender || 'm', p.is_alive ?? true, byear || null,
-         p.birth_date || null, dyear || null, p.death_date || null, clanId]
+         p.birth_date || null, dyear || null, p.death_date || null, clanId,
+         !!(clanId && weakClan)]
       );
       return r.rows[0].id;
     }
@@ -183,6 +294,7 @@ app.post("/api/family", async (req, res) => {
       // 'new' или 'nameonly' → создаём карточку
       return await createPerson({
         last_name: spec.last_name || defaultSurname || null,
+        maiden_name: spec.maiden_name || null,
         first_name: spec.first_name || null,
         patronymic: spec.patronymic || null,
         gender: defaultGender,
@@ -202,14 +314,12 @@ app.post("/api/family", async (req, res) => {
     }
 
     // --- отец ---
-    const fatherSurname = data.surnameManual || null;
-    const fatherId = await resolveParent(data.father, 'm', fatherSurname);
+    const fatherId = await resolveParent(data.father, 'm', surnameManualNorm);
 
-    // определяем имя отца (для отчества) и фамилию (для наследования детьми)
-    let fatherFirstName = null, inheritedSurname = data.surnameManual || null;
+    // имя отца (для отчества) и фамилия (для наследования детьми)
+    let fatherFirstName = null, inheritedSurname = baseSurname;
     if (data.father && data.father.mode === 'existing') {
-      const info = await firstNameOf(fatherId);
-      if (info) { fatherFirstName = info.first_name; if (!inheritedSurname) inheritedSurname = info.last_name; }
+      if (existingFatherInfo) fatherFirstName = existingFatherInfo.first_name;
     } else if (data.father && (data.father.mode === 'new' || data.father.mode === 'nameonly')) {
       fatherFirstName = data.father.first_name || null;
       if (!inheritedSurname) inheritedSurname = data.father.last_name || null;
@@ -218,16 +328,35 @@ app.post("/api/family", async (req, res) => {
     // образование отчества от имени отца
     function makePatronymic(firstName, gender) {
       if (!firstName) return null;
-      // упрощённо: муж +ович, жен +овна. Спорные случаи правятся вручную позже.
-      const base = firstName.trim();
-      return gender === 'f' ? base + 'овна' : base + 'ович';
+      let base = firstName.trim();
+      // 1) словарь исключений — главнее всех правил
+      const ex = PATR_EX[base.toLowerCase()];
+      if (ex) return gender === 'f' ? ex.f : ex.m;
+      // 2) общие правила: Таубий → Таубиевич (русские имена на «-ий» — в словаре)
+      const last = base.slice(-1).toLowerCase();
+      if (last === 'ь' || last === 'й') base = base.slice(0, -1); // Исмаиль → Исмаил-евич
+      const vowel = 'аяиуэоеыёю'.includes(base.slice(-1).toLowerCase());
+      // на гласную: Мусса-Хаджи → Мусса-Хаджиевич; на согласную: Аубекир → Аубекирович
+      const suffM = vowel ? 'евич' : 'ович';
+      const suffF = vowel ? 'евна' : 'овна';
+      return base + (gender === 'f' ? suffF : suffM);
     }
 
     const createdChildren = [];
 
     // --- проходим по каждой матери и её детям ---
     for (const group of (data.mothers || [])) {
-      const motherId = await resolveParent(group.mother, 'f', null);
+      // «взяла фамилию мужа»: своя фамилия становится девичьей, надевается мужняя
+      let motherSpec = group.mother;
+      if (motherSpec && (motherSpec.mode === 'new' || motherSpec.mode === 'nameonly')
+          && group.relation === 'married' && group.take_surname && inheritedSurname) {
+        motherSpec = {
+          ...motherSpec,
+          maiden_name: motherSpec.last_name || null,
+          last_name: feminizeSurname(inheritedSurname),
+        };
+      }
+      const motherId = await resolveParent(motherSpec, 'f', null);
 
       // брачная нить между отцом и матерью — только если 'married'
       if (fatherId && motherId && group.relation === 'married') {
@@ -241,8 +370,21 @@ app.post("/api/family", async (req, res) => {
 
       // дети этой матери
       for (const ch of (group.children || [])) {
+        // ребёнок опознан как уже существующий в базе → карточку не создаём,
+        // только добавляем недостающие связи родитель→ребёнок
+        if (ch.existing_id) {
+          const childId = Number(ch.existing_id);
+          createdChildren.push(childId);
+          if (fatherId) await client.query(
+            `INSERT INTO relationships (person_a, person_b, kind) VALUES ($1,$2,'parent')
+             ON CONFLICT (person_a, person_b, kind) DO NOTHING`, [fatherId, childId]);
+          if (motherId) await client.query(
+            `INSERT INTO relationships (person_a, person_b, kind) VALUES ($1,$2,'parent')
+             ON CONFLICT (person_a, person_b, kind) DO NOTHING`, [motherId, childId]);
+          continue;
+        }
         const childSurname = (ch.gender === 'f')
-          ? (inheritedSurname ? inheritedSurname : null)  // фамилию женщин оставляем как есть (девичья от отца)
+          ? feminizeSurname(inheritedSurname)   // дочери: Курджиев → Курджиева
           : inheritedSurname;
         const childId = await createPerson({
           last_name: childSurname,
@@ -268,7 +410,20 @@ app.post("/api/family", async (req, res) => {
     }
 
     await client.query("COMMIT");
-    res.json({ ok: true, fatherId, childrenCount: createdChildren.length });
+
+    // род указан, но фамилия отца неизвестна → на проверку
+    if (clanId && weakClan) {
+      await pool.query(
+        `INSERT INTO review_queue (kind, person_id, details) VALUES ('clan_unverified', $1, $2)`,
+        [fatherId || createdChildren[0] || null, JSON.stringify({
+          clan: clanNameFinal,
+          reason: "фамилия отца неизвестна — род записан со слов, требует подтверждения",
+          children: createdChildren,
+        })]
+      ).catch(() => {});
+    }
+
+    res.json({ ok: true, fatherId, childrenCount: createdChildren.length, childrenIds: createdChildren });
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(500).json({ ok: false, error: e.message });
@@ -286,6 +441,99 @@ app.delete("/api/person/:id", async (req, res) => {
     if (!id) { res.status(400).json({ ok: false, error: "нет id" }); return; }
     await pool.query("DELETE FROM people WHERE id = $1", [id]);
     res.json({ ok: true, deleted: id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+
+// ============ ПРОВЕРКА ОДНОГО ЧЕЛОВЕКА НА ДУБЛИ (по всей базе) ============
+// Форма зовёт этот адрес, когда заполнение человека закончено.
+// GET /api/check-person?first=Хасан&last=Курджиев&year=1890&gender=m
+// Отвечает списком похожих людей из базы + их родителями (для сверки связей).
+app.get("/api/check-person", async (req, res) => {
+  try {
+    const first = (req.query.first || "").trim();
+    const last = (req.query.last || "").trim();
+    const year = req.query.year ? Number(req.query.year) : null;
+    const gender = (req.query.gender || "").trim(); // 'm' / 'f' / ''
+    const father = (req.query.father || "").trim(); // имя отца добавляемого (если известно)
+    const mother = (req.query.mother || "").trim(); // имя матери добавляемого (если известно)
+    if (!first) { res.json({ candidates: [] }); return; }
+
+    // База небольшая — просматриваем всех (при росте заменим на индексы)
+    const all = await pool.query(
+      `SELECT id, first_name, last_name, patronymic, gender, birth_year, death_year, is_alive
+       FROM people`
+    );
+
+    const candidates = [];
+    for (const p of all.rows) {
+      if (!similarNames(first, p.first_name)) continue;          // имя обязано быть похожим
+      if (gender && p.gender && gender !== p.gender) continue;   // пол, если известен, должен совпадать
+      // фамилия: если указана у обоих — должна быть похожа
+      if (last && p.last_name && !similarNames(last, p.last_name)) continue;
+      // год: если известен у обоих и разница больше 3 лет — считаем разными людьми
+      if (year && p.birth_year && Math.abs(year - p.birth_year) > 3) continue;
+      candidates.push(p);
+      if (candidates.length >= 8) break; // больше не имеет смысла показывать
+    }
+
+    // К каждому кандидату — его родители (для проверки «не одна ли это семья»)
+    const out = [];
+    for (const c of candidates) {
+      const par = await pool.query(
+        `SELECT p.id, p.first_name, p.last_name, p.gender
+         FROM relationships r JOIN people p ON p.id = r.person_a
+         WHERE r.kind = 'parent' AND r.person_b = $1`,
+        [c.id]
+      );
+      // Сверка отцов: если отец добавляемого известен, а у кандидата отец
+      // (по связи или по корню отчества) явно другой — это не тот человек.
+      if (father) {
+        const dadNames = par.rows.filter(x => x.gender === 'm').map(x => x.first_name);
+        if (!dadNames.length && c.patronymic) dadNames.push(patrRoot(c.patronymic));
+        if (dadNames.length && !dadNames.some(n => similarNames(father, n))) continue;
+      }
+      // Сверка матерей: если мать добавляемого известна, а у кандидата мать другая — не тот человек
+      if (mother) {
+        const momNames = par.rows.filter(x => x.gender === 'f').map(x => x.first_name);
+        if (momNames.length && !momNames.some(n => similarNames(mother, n))) continue;
+      }
+      out.push({ ...c, parents: par.rows });
+    }
+    res.json({ candidates: out });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ============ ОЧЕРЕДЬ НА РАЗБОР ============
+// Сюда автоматика складывает спорные случаи. Ничего не решает сама.
+app.post("/api/review", async (req, res) => {
+  try {
+    const { kind, person_id, details } = req.body || {};
+    if (!kind || !details) { res.status(400).json({ ok: false, error: "нужны kind и details" }); return; }
+    const r = await pool.query(
+      `INSERT INTO review_queue (kind, person_id, details) VALUES ($1, $2, $3) RETURNING id`,
+      [kind, person_id || null, JSON.stringify(details)]
+    );
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Посмотреть открытые спорные случаи (пока — для админа, позже — кабинет модератора)
+app.get("/api/review", async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT q.id, q.kind, q.person_id, q.details, q.status, q.created_at,
+              p.first_name, p.last_name
+       FROM review_queue q LEFT JOIN people p ON p.id = q.person_id
+       WHERE q.status = 'open' ORDER BY q.created_at`
+    );
+    res.json({ items: r.rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
