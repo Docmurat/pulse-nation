@@ -14,3 +14,8 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+
+
+
+## Продолжаем проект «Пульс Нации» — генеалогическая платформа карачаевского народа. Я не программист, работаем по шагам, ты говоришь — я делаю, по-русски. Читай прикреплённые файлы PROJECT.md и CLAUDE.md — там весь контекст, статус и правила. Скажи, на каком шаге мы остановились, и продолжим оттуда. Ты мне даешь готовые сгенерированные файлы для копи паста, но файлы должны называться именем всего пути. к примеру app_director_[slug]_new_page.tsx Для легкого понимания куда его вствлять. Также PROJECT.md — живой: в нём есть раздел СТАТУС с галочками. По мере продвижения мы будем отмечать сделанное и обновлять строчку «на чём остановились». Напоминай мне обновить его в конце важных шагов.
