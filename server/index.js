@@ -41,7 +41,7 @@ app.get("/api/graph", async (req, res) => {
   try {
     const people = await pool.query(`
       SELECT id, last_name, first_name, patronymic, maiden_name,
-             gender, birth_year, is_alive, clan_id
+             gender, birth_year, death_year, is_alive, clan_id
       FROM people ORDER BY id
     `);
     const rels = await pool.query(`
@@ -162,11 +162,16 @@ app.post("/api/family", async (req, res) => {
 
     // помощник: создать человека, вернуть id
     async function createPerson(p) {
+      // если указана полная дата, а год пуст — берём год из даты (для публичного показа)
+      const byear = p.birth_year || (p.birth_date ? Number(String(p.birth_date).slice(0, 4)) : null);
+      const dyear = p.death_year || (p.death_date ? Number(String(p.death_date).slice(0, 4)) : null);
       const r = await client.query(
-        `INSERT INTO people (last_name, first_name, patronymic, gender, is_alive, birth_year, clan_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        `INSERT INTO people (last_name, first_name, patronymic, gender, is_alive,
+                             birth_year, birth_date, death_year, death_date, clan_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
         [p.last_name || null, p.first_name || null, p.patronymic || null,
-         p.gender || 'm', p.is_alive ?? false, p.birth_year || null, clanId]
+         p.gender || 'm', p.is_alive ?? true, byear || null,
+         p.birth_date || null, dyear || null, p.death_date || null, clanId]
       );
       return r.rows[0].id;
     }
@@ -181,8 +186,11 @@ app.post("/api/family", async (req, res) => {
         first_name: spec.first_name || null,
         patronymic: spec.patronymic || null,
         gender: defaultGender,
-        is_alive: spec.is_alive ?? false,
+        is_alive: spec.is_alive ?? true,
         birth_year: spec.birth_year || null,
+        birth_date: spec.birth_date || null,
+        death_year: spec.death_year || null,
+        death_date: spec.death_date || null,
       });
     }
 
@@ -241,8 +249,11 @@ app.post("/api/family", async (req, res) => {
           first_name: ch.first_name,
           patronymic: makePatronymic(fatherFirstName, ch.gender),
           gender: ch.gender,
-          is_alive: ch.is_alive ?? false,
+          is_alive: ch.is_alive ?? true,
           birth_year: ch.birth_year || null,
+          birth_date: ch.birth_date || null,
+          death_year: ch.death_year || null,
+          death_date: ch.death_date || null,
         });
         createdChildren.push(childId);
 

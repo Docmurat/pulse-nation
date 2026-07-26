@@ -2,26 +2,67 @@ import { useState, useEffect, useRef } from "react";
 
 const API = "http://localhost:3001";
 
-// Поле выбора человека из базы (с поиском) либо ввода нового / только имени / неизвестного
-function PersonPicker({ role, value, onChange, defaultGender }) {
-  const [mode, setMode] = useState(value?.mode || "none");
+// Блок дат: год + полная дата рождения; при галочке «умер ☾» — то же для смерти.
+// Всё необязательно: можно только год, можно вообще пропустить.
+function LifeDates({ v, onChange }) {
+  const set = (patch) => onChange({ ...v, ...patch });
+  return (
+    <div className="pf-dates">
+      <div className="pf-dates-row">
+        <input className="pf-year" placeholder="год рожд." value={v.birth_year}
+          onChange={e => set({ birth_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+        <input className="pf-date" type="date" title="полная дата рождения (необязательно, приватна)"
+          value={v.birth_date} onChange={e => set({ birth_date: e.target.value })} />
+        <label className="af-alive" title="отметить, что человек ушёл из жизни">
+          <input type="checkbox" checked={!v.is_alive}
+            onChange={e => set({ is_alive: !e.target.checked })} />умер ☾
+        </label>
+      </div>
+      {!v.is_alive && (
+        <div className="pf-dates-row">
+          <input className="pf-year" placeholder="год смерти" value={v.death_year}
+            onChange={e => set({ death_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+          <input className="pf-date" type="date" title="полная дата смерти (необязательно)"
+            value={v.death_date} onChange={e => set({ death_date: e.target.value })} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const emptyDates = { birth_year: "", birth_date: "", is_alive: true, death_year: "", death_date: "" };
+
+function datesToPayload(d) {
+  return {
+    is_alive: d.is_alive,
+    birth_year: d.birth_year ? Number(d.birth_year) : null,
+    birth_date: d.birth_date || null,
+    death_year: !d.is_alive && d.death_year ? Number(d.death_year) : null,
+    death_date: !d.is_alive && d.death_date ? d.death_date : null,
+  };
+}
+
+// Поле выбора человека: из базы (по умолчанию) / новый / только имя / неизвестен
+function PersonPicker({ role, value, onChange }) {
+  const [mode, setMode] = useState(value?.mode || "existing");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [chosenLabel, setChosenLabel] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [dates, setDates] = useState(emptyDates);
   const timer = useRef(null);
 
   useEffect(() => {
     onChange(buildValue());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, firstName, lastName, chosenLabel]);
+  }, [mode, firstName, lastName, chosenLabel, dates]);
 
   function buildValue() {
     if (mode === "none") return { mode: "none" };
-    if (mode === "existing") return value?.id ? { mode: "existing", id: value.id } : { mode: "none" };
-    if (mode === "nameonly") return { mode: "nameonly", first_name: firstName };
-    if (mode === "new") return { mode: "new", first_name: firstName, last_name: lastName };
+    if (mode === "existing") return value?.id ? { mode: "existing", id: value.id } : { mode: "existing" };
+    if (mode === "nameonly") return { mode: "nameonly", first_name: firstName, ...datesToPayload(dates) };
+    if (mode === "new") return { mode: "new", first_name: firstName, last_name: lastName, ...datesToPayload(dates) };
     return { mode: "none" };
   }
 
@@ -56,7 +97,7 @@ function PersonPicker({ role, value, onChange, defaultGender }) {
 
       {mode === "existing" && (
         <div className="pf-search">
-          {value?.mode === "existing" && chosenLabel
+          {value?.mode === "existing" && value?.id && chosenLabel
             ? <div className="pf-chosen">{chosenLabel} <button type="button" onClick={() => { setChosenLabel(""); onChange({ mode: "existing" }); }}>✕</button></div>
             : <>
                 <input placeholder="поиск по имени или фамилии…" value={query} onChange={e => doSearch(e.target.value)} />
@@ -74,27 +115,35 @@ function PersonPicker({ role, value, onChange, defaultGender }) {
         </div>
       )}
       {mode === "new" && (
-        <div className="pf-fields">
-          <input placeholder="фамилия" value={lastName} onChange={e => setLastName(e.target.value)} />
-          <input placeholder="имя" value={firstName} onChange={e => setFirstName(e.target.value)} />
-        </div>
+        <>
+          <div className="pf-fields">
+            <input placeholder="фамилия" value={lastName} onChange={e => setLastName(e.target.value)} />
+            <input placeholder="имя" value={firstName} onChange={e => setFirstName(e.target.value)} />
+          </div>
+          <LifeDates v={dates} onChange={setDates} />
+        </>
       )}
       {mode === "nameonly" && (
-        <div className="pf-fields">
-          <input placeholder="имя" value={firstName} onChange={e => setFirstName(e.target.value)} />
-        </div>
+        <>
+          <div className="pf-fields">
+            <input placeholder="имя" value={firstName} onChange={e => setFirstName(e.target.value)} />
+          </div>
+          <LifeDates v={dates} onChange={setDates} />
+        </>
       )}
       {mode === "none" && <div className="pf-hint">будет отмечено как пробел (дыра) — дозаполнишь позже</div>}
     </div>
   );
 }
 
+const newChild = () => ({ first_name: "", gender: "m", ...emptyDates });
+
 export default function AddFamily({ onClose, onSaved }) {
-  const [father, setFather] = useState({ mode: "none" });
+  const [father, setFather] = useState({ mode: "existing" });
   const [surnameManual, setSurnameManual] = useState("");
   const [clanName, setClanName] = useState("Курджиевы");
   const [mothers, setMothers] = useState([
-    { mother: { mode: "none" }, relation: "none", children: [{ first_name: "", gender: "m", is_alive: false, birth_year: "" }] },
+    { mother: { mode: "existing" }, relation: "none", children: [newChild()] },
   ]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -104,7 +153,7 @@ export default function AddFamily({ onClose, onSaved }) {
     setMothers(ms => ms.map((m, k) => k === i ? { ...m, ...patch } : m));
   }
   function addMother() {
-    setMothers(ms => [...ms, { mother: { mode: "none" }, relation: "none", children: [{ first_name: "", gender: "m", is_alive: false, birth_year: "" }] }]);
+    setMothers(ms => [...ms, { mother: { mode: "existing" }, relation: "none", children: [newChild()] }]);
   }
   function removeMother(i) {
     setMothers(ms => ms.length > 1 ? ms.filter((_, k) => k !== i) : ms);
@@ -113,7 +162,7 @@ export default function AddFamily({ onClose, onSaved }) {
     setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: m.children.map((c, j) => j === ci ? { ...c, ...patch } : c) }));
   }
   function addChild(mi) {
-    setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: [...m.children, { first_name: "", gender: "m", is_alive: false, birth_year: "" }] }));
+    setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: [...m.children, newChild()] }));
   }
   function removeChild(mi, ci) {
     setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: m.children.length > 1 ? m.children.filter((_, j) => j !== ci) : m.children }));
@@ -130,7 +179,7 @@ export default function AddFamily({ onClose, onSaved }) {
         relation: m.relation,
         children: m.children
           .filter(c => c.first_name.trim())
-          .map(c => ({ first_name: c.first_name.trim(), gender: c.gender, is_alive: c.is_alive, birth_year: c.birth_year ? Number(c.birth_year) : null })),
+          .map(c => ({ first_name: c.first_name.trim(), gender: c.gender, ...datesToPayload(c) })),
       })),
     };
   }
@@ -165,7 +214,7 @@ export default function AddFamily({ onClose, onSaved }) {
 
         <div className="af-section">
           <div className="af-label">Отец</div>
-          <PersonPicker role="глава семьи" value={father} onChange={setFather} defaultGender="m" />
+          <PersonPicker role="глава семьи" value={father} onChange={setFather} />
         </div>
 
         <div className="af-row2">
@@ -179,7 +228,7 @@ export default function AddFamily({ onClose, onSaved }) {
               <span>Мать {mothers.length > 1 ? `#${mi + 1}` : ""}</span>
               {mothers.length > 1 && <button className="af-remove" onClick={() => removeMother(mi)}>убрать мать</button>}
             </div>
-            <PersonPicker role="мать детей" value={m.mother} onChange={v => setMother(mi, { mother: v })} defaultGender="f" />
+            <PersonPicker role="мать детей" value={m.mother} onChange={v => setMother(mi, { mother: v })} />
             <div className="af-relation">
               отношения с отцом:
               <select value={m.relation} onChange={e => setMother(mi, { relation: e.target.value })}>
@@ -192,14 +241,31 @@ export default function AddFamily({ onClose, onSaved }) {
             <div className="af-children">
               <div className="af-children-title">Дети</div>
               {m.children.map((c, ci) => (
-                <div className="af-child" key={ci}>
-                  <input className="af-cname" placeholder="имя" value={c.first_name} onChange={e => setChild(mi, ci, { first_name: e.target.value })} />
-                  <select value={c.gender} onChange={e => setChild(mi, ci, { gender: e.target.value })}>
-                    <option value="m">муж</option><option value="f">жен</option>
-                  </select>
-                  <input className="af-cyear" placeholder="год" value={c.birth_year} onChange={e => setChild(mi, ci, { birth_year: e.target.value })} />
-                  <label className="af-alive"><input type="checkbox" checked={!c.is_alive} onChange={e => setChild(mi, ci, { is_alive: !e.target.checked })} />☾</label>
-                  {m.children.length > 1 && <button className="af-remove" onClick={() => removeChild(mi, ci)}>✕</button>}
+                <div className="af-childbox" key={ci}>
+                  <div className="af-child">
+                    <input className="af-cname" placeholder="имя" value={c.first_name} onChange={e => setChild(mi, ci, { first_name: e.target.value })} />
+                    <select value={c.gender} onChange={e => setChild(mi, ci, { gender: e.target.value })}>
+                      <option value="m">муж</option><option value="f">жен</option>
+                    </select>
+                    <label className="af-alive" title="отметить, что человек ушёл из жизни">
+                      <input type="checkbox" checked={!c.is_alive} onChange={e => setChild(mi, ci, { is_alive: !e.target.checked })} />☾
+                    </label>
+                    {m.children.length > 1 && <button className="af-remove" onClick={() => removeChild(mi, ci)}>✕</button>}
+                  </div>
+                  <div className="pf-dates-row af-cdates">
+                    <input className="pf-year" placeholder="год рожд." value={c.birth_year}
+                      onChange={e => setChild(mi, ci, { birth_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+                    <input className="pf-date" type="date" title="полная дата рождения (необязательно, приватна)"
+                      value={c.birth_date} onChange={e => setChild(mi, ci, { birth_date: e.target.value })} />
+                    {!c.is_alive && (
+                      <>
+                        <input className="pf-year" placeholder="год смерти" value={c.death_year}
+                          onChange={e => setChild(mi, ci, { death_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+                        <input className="pf-date" type="date" title="полная дата смерти (необязательно)"
+                          value={c.death_date} onChange={e => setChild(mi, ci, { death_date: e.target.value })} />
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
               <button className="af-add-child" onClick={() => addChild(mi)}>+ ребёнок</button>

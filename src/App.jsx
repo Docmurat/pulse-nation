@@ -52,6 +52,7 @@ export default function App() {
         g: r.gender,                       // 'm' / 'f'
         death: r.is_alive ? null : 1,      // не жив → помечаем «ушедший»
         birth: r.birth_year || null,
+        dyear: r.death_year || null,
         clan: r.clan_id || 0,
         photo: false,
         av: AVA[i % AVA.length],
@@ -305,10 +306,15 @@ export default function App() {
       const card=document.getElementById("card");
 
       function lifeStr(p){
-        if(p.birth && p.death) return `${p.birth} — ушёл из жизни`;
-        if(p.death) return "ушёл из жизни";
+        const gone = p.g==="f" ? "ушла из жизни" : "ушёл из жизни";
+        if(p.death){
+          if(p.birth && p.dyear) return `${p.birth} — ${p.dyear}`;
+          if(p.dyear) return `${gone} · ${p.dyear}`;
+          if(p.birth) return `${p.birth} — ${gone}`;
+          return gone;
+        }
         if(p.birth) return `${p.birth} г.р. · ${YEAR-p.birth} лет`;
-        return p.g==="f"?"годы жизни неизвестны":"годы жизни неизвестны";
+        return "годы жизни неизвестны";
       }
       const relLink=(p,role)=>`<a href="#" data-id="${p.id}">${p.surname} ${p.name} <span>· ${role}</span></a>`;
 

@@ -156,3 +156,12 @@
   border-radius:9px;background:rgba(210,90,90,.06);color:#c04a4a;font-size:12.5px;
   cursor:pointer;font-family:inherit}
 .c-delete:hover{background:rgba(210,90,90,.13)}
+/* даты рождения/смерти в форме */
+.pf-dates{margin-top:8px}
+.pf-dates-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.pf-year{width:82px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;
+  font-size:13px;outline:none;font-family:inherit}
+.pf-date{padding:6px 8px;border:1px solid var(--line);border-radius:8px;
+  font-size:12.5px;outline:none;font-family:inherit;color:var(--ink)}
+.af-childbox{border-bottom:1px dashed rgba(35,60,90,.1);padding-bottom:8px;margin-bottom:8px}
+.af-cdates{margin-top:5px;margin-bottom:0}
