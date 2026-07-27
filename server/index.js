@@ -343,6 +343,8 @@ app.post("/api/family", async (req, res) => {
     }
 
     const createdChildren = [];
+    const newChildrenInfo = [];   // НОВЫЕ дети (не из базы) — для проверки «не одна ли это семья?»
+    const motherIds = [];         // id всех матерей этой семьи — чтобы не путать их с «чужими» родителями
 
     // --- проходим по каждой матери и её детям ---
     for (const group of (data.mothers || [])) {
@@ -357,6 +359,7 @@ app.post("/api/family", async (req, res) => {
         };
       }
       const motherId = await resolveParent(motherSpec, 'f', null);
+      if (motherId) motherIds.push(motherId);
 
       // брачная нить между отцом и матерью — только если 'married'
       if (fatherId && motherId && group.relation === 'married') {
@@ -398,6 +401,12 @@ app.post("/api/family", async (req, res) => {
           death_date: ch.death_date || null,
         });
         createdChildren.push(childId);
+        newChildrenInfo.push({
+          id: childId,
+          first_name: ch.first_name,
+          gender: ch.gender,
+          birth_year: ch.birth_year || (ch.birth_date ? Number(String(ch.birth_date).slice(0, 4)) : null),
+        });
 
         // связи родитель→ребёнок (к отцу и к матери, если они есть)
         if (fatherId) await client.query(
@@ -423,6 +432,16 @@ app.post("/api/family", async (req, res) => {
       ).catch(() => {});
     }
 
+    // тихая проверка «не одна ли это семья?» — совпадение НЕСКОЛЬКИХ детей
+    // с детьми одной существующей семьи. Ничего не сливает, только записка в очередь.
+    await checkFamilyOverlap({
+      newChildren: newChildrenInfo,
+      ourParentIds: [fatherId, ...motherIds].filter(Boolean),
+      ourFatherName: fatherFirstName
+        ? `${inheritedSurname || ''} ${fatherFirstName}`.trim()
+        : null,
+    });
+
     res.json({ ok: true, fatherId, childrenCount: createdChildren.length, childrenIds: createdChildren });
   } catch (e) {
     await client.query("ROLLBACK");
@@ -431,6 +450,86 @@ app.post("/api/family", async (req, res) => {
     client.release();
   }
 });
+
+// ============ ПРОВЕРКА «НЕ ОДНА ЛИ ЭТО СЕМЬЯ?» ============
+// Каждый ребёнок по отдельности мог не показать плашку (у кандидата «другой» отец),
+// но если ДВОЕ И БОЛЕЕ наших новых детей совпали с детьми одной и той же
+// СУЩЕСТВУЮЩЕЙ семьи — возможно, это та же семья, записанная дважды
+// (например, имя отца указано по-разному: Хасан / Хасанбий).
+// АВТОМАТИКА НИЧЕГО НЕ СЛИВАЕТ: случай тихо кладётся в review_queue, решает человек.
+async function checkFamilyOverlap({ newChildren, ourParentIds, ourFatherName }) {
+  try {
+    if (!newChildren || newChildren.length < 2) return; // нужен минимум «брат и сестра»
+    const ourIds = new Set([...(ourParentIds || []), ...newChildren.map(c => c.id)]);
+
+    // База небольшая — просматриваем всех (при росте заменим на индексы)
+    const all = await pool.query(
+      `SELECT id, first_name, last_name, gender, birth_year FROM people`
+    );
+
+    // Шаг 1: для каждого нашего нового ребёнка ищем похожих людей среди ЧУЖИХ
+    const matches = []; // пары { nc: наш ребёнок, p: похожий человек из базы }
+    for (const nc of newChildren) {
+      if (!nc.first_name) continue;
+      for (const p of all.rows) {
+        if (ourIds.has(p.id)) continue;                                    // свои не в счёт
+        if (nc.gender && p.gender && nc.gender !== p.gender) continue;     // пол должен совпасть
+        if (nc.birth_year && p.birth_year
+            && Math.abs(nc.birth_year - p.birth_year) > 3) continue;       // год ±3
+        if (!similarNames(nc.first_name, p.first_name)) continue;          // имя похоже
+        matches.push({ nc, p });
+      }
+    }
+    if (matches.length < 2) return; // совпал максимум один — обычный тёзка, шум
+
+    // Шаг 2: у каждого похожего берём родителей и группируем по родителю.
+    // Один и тот же чужой родитель «собрал» двоих наших детей? Подозрительно.
+    const byParent = new Map(); // id родителя → { parent, pairs: Map(наш ребёнок → пара) }
+    for (const m of matches) {
+      const par = await pool.query(
+        `SELECT p.id, p.first_name, p.last_name
+         FROM relationships r JOIN people p ON p.id = r.person_a
+         WHERE r.kind = 'parent' AND r.person_b = $1`,
+        [m.p.id]
+      );
+      for (const parent of par.rows) {
+        if (ourIds.has(parent.id)) continue; // это наш же родитель — не чужая семья
+        let g = byParent.get(parent.id);
+        if (!g) { g = { parent, pairs: new Map() }; byParent.set(parent.id, g); }
+        g.pairs.set(m.nc.id, m); // один наш ребёнок считается один раз на родителя
+      }
+    }
+
+    // Шаг 3: где двое и больше — записка в очередь на разбор
+    for (const g of byParent.values()) {
+      if (g.pairs.size < 2) continue;
+      const matched = [...g.pairs.values()].map(m => ({
+        entered: { id: m.nc.id, name: m.nc.first_name },
+        found: {
+          id: m.p.id,
+          name: `${m.p.last_name || ''} ${m.p.first_name || ''}`.trim(),
+          year: m.p.birth_year,
+        },
+      }));
+      await pool.query(
+        `INSERT INTO review_queue (kind, person_id, details) VALUES ('family_overlap', $1, $2)`,
+        [g.parent.id, JSON.stringify({
+          question: "Не одна ли это семья? Совпали несколько детей, но родители записаны разными.",
+          entered_father: ourFatherName || null,
+          existing_parent: {
+            id: g.parent.id,
+            name: `${g.parent.last_name || ''} ${g.parent.first_name || ''}`.trim(),
+          },
+          matched_children: matched,
+          note: "Автоматика ничего не сливает. Решение — за модератором.",
+        })]
+      );
+    }
+  } catch (e) {
+    // проверка не имеет права ломать сохранение семьи
+    console.log("Проверка family_overlap пропущена:", e.message);
+  }
+}
 
 // ============ УДАЛЕНИЕ ЧЕЛОВЕКА ============
 // Удаляет только выбранного человека. Его связи убираются автоматически
