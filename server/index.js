@@ -44,7 +44,10 @@ app.get("/api/graph", async (req, res) => {
              gender, birth_year, death_year, is_alive, clan_id,
              CASE WHEN birth_date IS NOT NULL AND is_alive
                   THEN EXTRACT(YEAR FROM age(birth_date))::int
-             END AS age
+             END AS age,
+             CASE WHEN NOT is_alive AND birth_date IS NOT NULL AND death_date IS NOT NULL
+                  THEN EXTRACT(YEAR FROM age(death_date, birth_date))::int
+             END AS age_at_death
       FROM people ORDER BY id
     `);
     const rels = await pool.query(`

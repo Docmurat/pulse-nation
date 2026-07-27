@@ -83,10 +83,10 @@ function LifeDates({ v, onChange, onDone }) {
           onChange={e => set({ birth_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
         <input className="pf-date" type="date" title="полная дата рождения (необязательно, приватна)"
           value={v.birth_date} onChange={e => set({ birth_date: e.target.value })} />
-        <label className="af-alive" title="отметить, что человек ушёл из жизни">
-          <input type="checkbox" checked={!v.is_alive}
-            onChange={e => set({ is_alive: !e.target.checked })} />умер ☾
-        </label>
+        <button type="button"
+          className={"af-moon" + (!v.is_alive ? " on" : "")}
+          title="отметить, что человек ушёл из жизни"
+          onClick={() => set({ is_alive: !v.is_alive })}>🌙</button>
       </div>
       {!v.is_alive && (
         <div className="pf-dates-row">
@@ -122,7 +122,6 @@ function PersonPicker({ role, gender, value, onChange }) {
   function buildValue() {
     if (mode === "none") return { mode: "none" };
     if (mode === "existing") return value?.id ? { mode: "existing", id: value.id, first_name: value.first_name } : { mode: "existing" };
-    if (mode === "nameonly") return { mode: "nameonly", first_name: firstName, ...datesToPayload(dates) };
     if (mode === "new") return { mode: "new", first_name: firstName, last_name: lastName, patronymic: patr.trim() || null, ...datesToPayload(dates) };
     return { mode: "none" };
   }
@@ -148,12 +147,12 @@ function PersonPicker({ role, gender, value, onChange }) {
 
   // прозвон дублей: зовётся, когда поле имени/года «отпущено» (человек дозаполнен)
   async function checkDup() {
-    if (mode !== "new" && mode !== "nameonly") return;
+    if (mode !== "new") return;
     const nm = firstName.trim();
     if (nm.length < 3 || nm === dismissed) return;
     const found = await checkPerson({
       first: nm,
-      last: mode === "new" ? lastName : "",
+      last: lastName,
       year: dates.birth_year || (dates.birth_date ? dates.birth_date.slice(0, 4) : ""),
       gender,
     });
@@ -172,7 +171,6 @@ function PersonPicker({ role, gender, value, onChange }) {
       <div className="pf-modes">
         <button type="button" className={mode === "existing" ? "on" : ""} onClick={() => setMode("existing")}>из базы</button>
         <button type="button" className={mode === "new" ? "on" : ""} onClick={() => setMode("new")}>новый</button>
-        <button type="button" className={mode === "nameonly" ? "on" : ""} onClick={() => setMode("nameonly")}>только имя</button>
         <button type="button" className={mode === "none" ? "on" : ""} onClick={() => setMode("none")}>неизвестен</button>
       </div>
 
@@ -196,12 +194,12 @@ function PersonPicker({ role, gender, value, onChange }) {
               </>}
         </div>
       )}
-      {(mode === "new" || mode === "nameonly") && (
+      {mode === "new" && (
         <>
           <div className="pf-fields">
-            {mode === "new" && <input placeholder="фамилия" value={lastName} onBlur={checkDup} onChange={e => setLastName(e.target.value)} />}
+            <input placeholder="фамилия" value={lastName} onBlur={checkDup} onChange={e => setLastName(e.target.value)} />
             <input placeholder="имя" value={firstName} onBlur={checkDup} onChange={e => setFirstName(e.target.value)} />
-            {mode === "new" && <input placeholder="отчество" value={patr} onChange={e => setPatr(e.target.value)} />}
+            <input placeholder="отчество" value={patr} onChange={e => setPatr(e.target.value)} />
           </div>
           <LifeDates v={dates} onChange={setDates} onDone={checkDup} />
           {cand && <DupPanel candidates={cand} onAdopt={adopt}
@@ -332,7 +330,7 @@ export default function AddFamily({ onClose, onSaved }) {
     // хотя бы одного реального человека — отца, матери или ребёнка.
     const realPerson = v => !v ? false
       : v.mode === "existing" ? !!v.id
-      : (v.mode === "new" || v.mode === "nameonly") ? !!(v.first_name || "").trim()
+      : v.mode === "new" ? !!(v.first_name || "").trim()
       : false;
     const anyChild = mothers.some(m => m.children.some(c => c.existing_id || c.first_name.trim()));
     const anyone = anyChild || realPerson(father) || mothers.some(m => realPerson(m.mother));
@@ -376,7 +374,7 @@ export default function AddFamily({ onClose, onSaved }) {
                 <option value="divorced">в разводе</option>
               </select>
             </div>
-            {m.relation === "married" && (m.mother.mode === "new" || m.mother.mode === "nameonly") && (
+            {m.relation === "married" && m.mother.mode === "new" && (
               <label className="af-take-surname">
                 <input type="checkbox" checked={!!m.take_surname}
                   onChange={e => setMother(mi, { take_surname: e.target.checked })} />
@@ -398,12 +396,16 @@ export default function AddFamily({ onClose, onSaved }) {
                         <input className="af-cname" placeholder="имя" value={c.first_name}
                           onBlur={() => checkChild(mi, ci)}
                           onChange={e => setChild(mi, ci, { first_name: e.target.value })} />
-                        <select value={c.gender} onChange={e => setChild(mi, ci, { gender: e.target.value })}>
-                          <option value="m">муж</option><option value="f">жен</option>
-                        </select>
-                        <label className="af-alive" title="отметить, что человек ушёл из жизни">
-                          <input type="checkbox" checked={!c.is_alive} onChange={e => setChild(mi, ci, { is_alive: !e.target.checked })} />☾
-                        </label>
+                        <div className="af-gender" title="пол ребёнка">
+                          <button type="button"
+                            className={"af-g af-g-m" + (c.gender === "m" ? " on" : "")}
+                            title="мальчик"
+                            onClick={() => setChild(mi, ci, { gender: "m" })}>👦</button>
+                          <button type="button"
+                            className={"af-g af-g-f" + (c.gender === "f" ? " on" : "")}
+                            title="девочка"
+                            onClick={() => setChild(mi, ci, { gender: "f" })}>👧</button>
+                        </div>
                         {m.children.length > 1 && <button className="af-remove" onClick={() => removeChild(mi, ci)}>✕</button>}
                       </div>
                       <div className="pf-dates-row af-cdates">
@@ -412,15 +414,19 @@ export default function AddFamily({ onClose, onSaved }) {
                           onChange={e => setChild(mi, ci, { birth_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
                         <input className="pf-date" type="date" title="полная дата рождения (необязательно, приватна)"
                           value={c.birth_date} onChange={e => setChild(mi, ci, { birth_date: e.target.value })} />
-                        {!c.is_alive && (
-                          <>
-                            <input className="pf-year" placeholder="год смерти" value={c.death_year}
-                              onChange={e => setChild(mi, ci, { death_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
-                            <input className="pf-date" type="date" title="полная дата смерти (необязательно)"
-                              value={c.death_date} onChange={e => setChild(mi, ci, { death_date: e.target.value })} />
-                          </>
-                        )}
+                        <button type="button"
+                          className={"af-moon" + (!c.is_alive ? " on" : "")}
+                          title="отметить, что человек ушёл из жизни"
+                          onClick={() => setChild(mi, ci, { is_alive: !c.is_alive })}>🌙</button>
                       </div>
+                      {!c.is_alive && (
+                        <div className="pf-dates-row af-cdates">
+                          <input className="pf-year" placeholder="год смерти" value={c.death_year}
+                            onChange={e => setChild(mi, ci, { death_year: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+                          <input className="pf-date" type="date" title="полная дата смерти (необязательно)"
+                            value={c.death_date} onChange={e => setChild(mi, ci, { death_date: e.target.value })} />
+                        </div>
+                      )}
                       {childDup[`${mi}_${ci}`] && (
                         <DupPanel candidates={childDup[`${mi}_${ci}`]}
                           onAdopt={cd => adoptChild(mi, ci, cd)}

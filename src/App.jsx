@@ -58,6 +58,7 @@ export default function App() {
         death: r.is_alive ? null : 1,      // не жив → помечаем «ушедший»
         birth: r.birth_year || null,
         age: r.age ?? null,          // точный возраст с сервера (по полной дате)
+        aged: r.age_at_death ?? null, // точный возраст на момент смерти (по полным датам)
         dyear: r.death_year || null,
         clan: r.clan_id || 0,
         photo: false,
@@ -82,6 +83,15 @@ export default function App() {
 
       const rnd = (() => { let s = 20260726; return () => { s|=0; s=s+0x6D2B79F5|0; let t=Math.imul(s^s>>>15,1|s); t=t+Math.imul(t^t>>>7,61|t)^t; return((t^t>>>14)>>>0)/4294967296; }; })();
       const YEAR = 2026;
+
+      // «год/года/лет» по числу
+      const plural=n=>{const a=n%100,b=n%10;
+        if(a>10&&a<15)return"лет";if(b===1)return"год";if(b>=2&&b<=4)return"года";return"лет"};
+      // возраст: живым — сколько сейчас (точный с сервера или по году),
+      // ушедшим — сколько прожил (точный с сервера или «год смерти минус год рождения»)
+      const ageOf=p=>p.death
+        ?(p.aged??((p.birth&&p.dyear)?p.dyear-p.birth:null))
+        :(p.age??(p.birth?YEAR-p.birth:null));
 
       const parentsOf=p=>p.parents.map(id=>byId.get(id)).filter(Boolean)
         .sort((a,b)=>(a.g==="m"?0:1)-(b.g==="m"?0:1)); // отец слева, мать справа
@@ -126,6 +136,13 @@ export default function App() {
 
       function nodeAt(mx,my){
         const [x,y]=tf.invert([mx,my]);
+        // Когда видны чипы, попаданием считаем ВСЮ площадь чипа (палец не
+        // должен «терять» человека на краях длинной фамилии).
+        if(tf.k>1.15){
+          for(const p of people){
+            if(Math.abs(x-p.x)<=(p.cw||26)/2+2 && Math.abs(y-p.y)<=(p.chh||13.5)/2+2)return p;
+          }
+        }
         return sim.find(x,y,20/tf.k);
       }
       const zoom=d3.zoom().scaleExtent([.25,8])
@@ -169,7 +186,13 @@ export default function App() {
         const bsort=(a,b)=>((a.birth||0)-(b.birth||0));
         const row=(arr,y)=>{const w=(arr.length-1)*DX;
           arr.forEach((q,i)=>targets.set(q,[cx-w/2+i*DX,y]))};
-        const mid=[...sibs,p,...(sp?[sp]:[])];
+        // средний ярус: человек и ВСЕ его братья/сёстры (через любого общего
+        // родителя) по старшинству; супруг(а) — сразу справа от человека
+        const mid=[];
+        for(const q of [...sibs,p].sort(bsort)){
+          mid.push(q);
+          if(q===p&&sp)mid.push(sp);
+        }
         row(top,cy-DY);row(mid,cy);row(kids.sort(bsort),cy+DY);
         hier={set,targets};
         sim.alpha(Math.max(sim.alpha(),.3)).restart();
@@ -196,7 +219,13 @@ export default function App() {
 
       ctx.font="600 3.7px 'Segoe UI'";
       for(const p of people){
-        p.tw=Math.max(ctx.measureText(p.name).width,ctx.measureText(p.surname).width);
+        const a=ageOf(p);
+        p.sub2=(p.surname||"")+(a!=null?` · ${a} ${plural(a)}`:"");
+        ctx.font="600 3.7px 'Segoe UI'";
+        const w1=ctx.measureText(p.name||"").width;
+        ctx.font="3.4px 'Segoe UI'";
+        const w2=ctx.measureText(p.sub2).width;
+        p.tw=Math.max(w1,w2);
         p.cw=Math.max(26,p.tw+15); p.chh=13.5;
       }
 
@@ -301,7 +330,7 @@ export default function App() {
             ctx.fillText(p.name,x-w/2+12,y-2.5);
             ctx.font="3.4px 'Segoe UI'";
             ctx.fillStyle=p.death?"#93A0B0":"#66788C";
-            ctx.fillText(p.surname,x-w/2+12,y+2.9);
+            ctx.fillText(p.sub2,x-w/2+12,y+2.9);
           }
           ctx.globalAlpha=1;
         }
@@ -315,16 +344,16 @@ export default function App() {
       function lifeStr(p){
         const gone = p.g==="f" ? "ушла из жизни" : "ушёл из жизни";
         if(p.death){
-          if(p.birth && p.dyear) return `${p.birth} — ${p.dyear}`;
+          const lived=ageOf(p);
+          const livedStr=lived!=null?` · прожил${p.g==="f"?"а":""} ${lived} ${plural(lived)}`:"";
+          if(p.birth && p.dyear) return `${p.birth} — ${p.dyear}${livedStr}`;
           if(p.dyear) return `${gone} · ${p.dyear}`;
           if(p.birth) return `${p.birth} — ${gone}`;
           return gone;
         }
         if(p.birth){
           const n=p.age??(YEAR-p.birth); // точный возраст, если известна полная дата
-          const w=(x=>{const a=x%100,b=x%10;
-            if(a>10&&a<15)return"лет";if(b===1)return"год";if(b>=2&&b<=4)return"года";return"лет"})(n);
-          return `${p.birth} г.р. · ${n} ${w}`;
+          return `${p.birth} г.р. · ${n} ${plural(n)}`;
         }
         return "годы жизни неизвестны";
       }
@@ -347,23 +376,16 @@ export default function App() {
           .call(zoom.transform,d3.zoomIdentity.translate(W/2,H/2).scale(k).translate(-cx,-cy));
       }
 
-      // «Своя сцена»: человек стоит в ярусах или связан нитью с кем-то из ярусов
-      // (мама детей без брачной нити, племянник и т.п.) — таких кликом не дёргаем.
-      function inCurrentScene(p){
-        if(!hier)return false;
-        for(const q of hier.targets.keys())if(q.id===p.id)return true;
-        for(const l of links){
-          const a=l.source.id,b=l.target.id;
-          if(a!==p.id&&b!==p.id)continue;
-          const other=a===p.id?b:a;
-          for(const q of hier.targets.keys())if(q.id===other)return true;
-        }
-        return false;
-      }
+      // «Своя сцена»: раньше клик по родне из ярусов не перестраивал сцену.
+      // По решению основателя теперь ЛЮБОЙ клик центрирует выбранного человека
+      // с его собственными ярусами — прежняя проверка убрана.
 
       function select(p){
         selected=p;
-        if(!inCurrentScene(p)){ buildHier(p); centerFamily(); }
+        // Каждый выбранный человек становится центром: его ярусы строятся
+        // заново (родители — верх, братья/сёстры и супруг(а) — середина,
+        // дети — низ), камера подводится к семье.
+        buildHier(p); centerFamily();
         const ava=document.getElementById("cAva");
         ava.className="noPhoto";ava.style.background="";ava.textContent="👤";
         document.getElementById("cWho").textContent=`${p.surname} ${p.name} ${p.patr||""}`;
@@ -405,19 +427,57 @@ export default function App() {
       });
       document.getElementById("closeCard").onclick=deselect;
 
-      const search=document.getElementById("search"),hint=document.getElementById("hint");
+      const search=document.getElementById("search"),sug=document.getElementById("suggest");
+      // ищем по всем словам запроса сразу: «ахмат тест» найдёт Тестова Ахмата
+      function matchesFor(q){
+        const words=q.toLowerCase().split(/\s+/).filter(Boolean);
+        if(!words.length)return[];
+        return people.filter(p=>{
+          const s=`${p.surname||""} ${p.name||""} ${p.patr||""} ${p.maiden||""}`.toLowerCase();
+          return words.every(w=>s.includes(w));
+        });
+      }
+      function renderSug(list){
+        if(!list.length){
+          sug.innerHTML=`<div class="sg-empty">никого не найдено</div>`;
+          sug.classList.add("on");return;
+        }
+        sug.innerHTML=list.slice(0,8).map(p=>{
+          const bits=[p.birth?`${p.birth} г.`:null,p.death?"☾":null].filter(Boolean).join(" · ");
+          return `<div class="sg" data-id="${p.id}">${p.surname||""} ${p.name||""} ${p.patr||""}`
+            +(bits?`<span> · ${bits}</span>`:"")+`</div>`;
+        }).join("");
+        if(list.length>8)sug.innerHTML+=`<div class="sg-empty">и ещё ${list.length-8} — уточни запрос</div>`;
+        sug.classList.add("on");
+      }
+      function hideSug(){sug.classList.remove("on");sug.innerHTML="";}
       search.addEventListener("input",()=>{
-        const q=search.value.trim().toLowerCase();
-        if(q.length<2){hint.textContent="";return}
-        const n=people.filter(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q)).length;
-        hint.textContent=n?`найдено: ${n} — Enter, чтобы перейти`:"никого не найдено";
+        const q=search.value.trim();
+        if(q.length<2){hideSug();return}
+        renderSug(matchesFor(q));
+      });
+      // mousedown, а не click: срабатывает раньше, чем поле потеряет фокус
+      sug.addEventListener("mousedown",e=>{
+        const el=e.target.closest(".sg[data-id]");
+        if(!el)return;e.preventDefault();
+        const p=byId.get(+el.dataset.id);
+        if(p){select(p);hideSug();search.value=`${p.surname||""} ${p.name||""}`.trim();search.blur()}
       });
       search.addEventListener("keydown",e=>{
+        if(e.key==="Escape"){hideSug();search.blur();return}
         if(e.key!=="Enter")return;
-        const q=search.value.trim().toLowerCase();
-        const p=people.find(p=>(p.surname+" "+p.name+" "+(p.patr||"")).toLowerCase().includes(q));
-        if(p){select(p);search.blur()}
+        const list=matchesFor(search.value.trim());
+        if(list[0]){select(list[0]);hideSug();search.blur()}
       });
+      search.addEventListener("blur",()=>setTimeout(hideSug,150));
+
+      // счётчик людей в базе (сверху по центру)
+      const pc=document.getElementById("pcount");
+      if(pc){
+        const n=people.length,a=n%100,b=n%10;
+        const w=(a>10&&a<15)?"человек":b===1?"человек":(b>=2&&b<=4)?"человека":"человек";
+        pc.textContent=`в базе: ${n} ${w}`;
+      }
 
       // «Записка» от формы: только что сохранённую семью выстроить на весь экран
       const focusId=Number(sessionStorage.getItem("pulse_focus_id")||"");
@@ -447,9 +507,11 @@ export default function App() {
           </div>
           <div id="searchWrap">
             <input id="search" type="text" placeholder="Найти человека… (Enter)" />
-            <div id="hint"></div>
+            <div id="suggest"></div>
           </div>
         </div>
+
+        <div className="hud" id="pcountWrap"><div id="pcount"></div></div>
 
         <div className="hud" id="legend">
           <div className="lg"><span className="dot" style={{background: 'var(--male)', boxShadow: '0 0 6px var(--male)'}}></span>мужчины</div>
