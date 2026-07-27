@@ -611,6 +611,36 @@ app.delete("/api/person/:id", async (req, res) => {
   }
 });
 
+// ============ ПРАВКА КАРТОЧКИ ЧЕЛОВЕКА ============
+// Принимает только присланные поля, остальные не трогает. Пустая строка = стереть значение.
+// Полная дата рождения по-прежнему наружу не отдаётся — здесь только приём правок.
+app.patch("/api/person/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) { res.status(400).json({ ok: false, error: "нет id" }); return; }
+    // какие поля разрешаем править (белый список — чтобы случайно не тронуть служебные)
+    const allowed = ["first_name", "last_name", "patronymic", "maiden_name",
+                     "gender", "birth_year", "death_year", "is_alive"];
+    const sets = [], vals = [];
+    for (const f of allowed) {
+      if (!(f in req.body)) continue;              // поле не прислали — не трогаем
+      let v = req.body[f];
+      if (v === "") v = null;                      // пустая строка = стереть
+      if ((f === "birth_year" || f === "death_year") && v != null) v = Number(v) || null;
+      if (f === "is_alive") v = !!v;
+      if (f === "gender" && v !== "m" && v !== "f") continue;
+      vals.push(v);
+      sets.push(`${f} = $${vals.length}`);
+    }
+    if (!sets.length) { res.json({ ok: true, changed: 0 }); return; }
+    vals.push(id);
+    await pool.query(`UPDATE people SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
+    res.json({ ok: true, changed: sets.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 
 // ============ ПРОВЕРКА ОДНОГО ЧЕЛОВЕКА НА ДУБЛИ (по всей базе) ============
 // Форма зовёт этот адрес, когда заполнение человека закончено.

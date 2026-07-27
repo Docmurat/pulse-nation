@@ -13,7 +13,7 @@
   .hud{position:fixed;z-index:10;pointer-events:none}
   .hud > *{pointer-events:auto}
 
-  #top{top:0;left:0;right:0;padding:18px 22px;display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  #top{top:0;left:0;right:0;padding:18px 22px;display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;z-index:15}
   .brand{display:flex;gap:12px;align-items:center}
   .brand .emblem{flex:none;filter:drop-shadow(0 1px 4px rgba(30,159,224,.35))}
   .brand h1{font-size:15px;font-weight:600;letter-spacing:.42em;text-transform:uppercase}
@@ -190,6 +190,13 @@
   border-radius:9px;background:rgba(210,90,90,.06);color:#c04a4a;font-size:12.5px;
   cursor:pointer;font-family:inherit}
 .c-delete:hover{background:rgba(210,90,90,.13)}
+
+/* кнопки «добавить родню» в карточке */
+#cAdd{display:flex;gap:6px;margin-top:12px}
+.c-add{flex:1;padding:7px 4px;border:1px solid rgba(30,159,224,.35);border-radius:9px;
+  background:rgba(30,159,224,.06);color:#1E9FE0;font-size:12px;cursor:pointer;font-family:inherit}
+.c-add:hover{background:rgba(30,159,224,.14)}
+
 /* даты рождения/смерти в форме */
 .pf-dates{margin-top:8px}
 .pf-dates-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
@@ -207,3 +214,21 @@
 .af-take-surname{display:flex;align-items:center;gap:7px;margin-top:8px;
   font-size:12.5px;color:var(--dim);cursor:pointer}
 .af-clan-hint{margin:-8px 0 12px}
+
+/* правка карточки */
+.c-edit{margin-top:12px;width:100%;padding:7px;border:1px solid rgba(120,140,170,.4);
+  border-radius:9px;background:rgba(120,140,170,.07);color:#5A6B85;font-size:12.5px;
+  cursor:pointer;font-family:inherit}
+.c-edit:hover{background:rgba(120,140,170,.15)}
+#cEditPanel{display:none;margin-top:10px}
+#card.editing #cEditPanel{display:block}
+#card.editing #cRel,#card.editing #cAdd,#card.editing #cDelete,#card.editing .c-edit{display:none}
+.ce-row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.ce-in{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--line);border-radius:8px;
+  font-size:13px;outline:none;font-family:inherit}
+.ce-year{flex:0 0 82px}
+.ce-gone{font-size:12px;color:#5A6B85;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.ce-save{flex:1;padding:8px;border:none;border-radius:9px;background:#1E9FE0;color:#fff;
+  font-size:13px;cursor:pointer;font-family:inherit}
+.ce-cancel{flex:1;padding:8px;border:1px solid var(--line);border-radius:9px;background:#fff;
+  color:#5A6B85;font-size:13px;cursor:pointer;font-family:inherit}

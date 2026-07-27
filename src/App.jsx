@@ -8,6 +8,8 @@ export default function App() {
   const startedRef = useRef(false);
   const reloadRef = useRef(null);
   const [showForm, setShowForm] = useState(false);
+  // с чем открыть форму: null — пустая; иначе { action, person } из карточки
+  const [prefill, setPrefill] = useState(null);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -379,6 +381,7 @@ export default function App() {
 
       function select(p){
         selected=p;
+        card.classList.remove("editing");   // клик по другому человеку закрывает правку
         // Каждый выбранный человек становится центром: его ярусы строятся
         // заново (родители — верх, братья/сёстры и супруг(а) — середина,
         // дети — низ), камера подводится к семье.
@@ -402,7 +405,64 @@ export default function App() {
         document.getElementById("cRel").innerHTML=rel;
         card.classList.add("on");
       }
-      function deselect(){selected=null;clearHier();card.classList.remove("on")}
+      function deselect(){selected=null;clearHier();card.classList.remove("editing");card.classList.remove("on")}
+
+      // «✎ править»: карточка превращается в мини-форму. Сохранение шлёт серверу
+      // только поля из белого списка (PATCH), после успеха космос перезагружается.
+      const editBtn=document.getElementById("cEdit");
+      const eSur=document.getElementById("cEsur"),eName=document.getElementById("cEname"),
+            ePatr=document.getElementById("cEpatr"),eMaid=document.getElementById("cEmaiden"),
+            eG=document.getElementById("cEgender"),eB=document.getElementById("cEbirth"),
+            eGone=document.getElementById("cEgone"),eD=document.getElementById("cEdeath");
+      if(editBtn)editBtn.onclick=()=>{
+        if(!selected)return;
+        eSur.value=selected.surname||"";
+        eName.value=selected.name==="—"?"":selected.name;  // прочерк-дыру в поле не тащим
+        ePatr.value=selected.patr||"";
+        eMaid.value=selected.maiden||"";
+        eG.value=selected.g||"m";
+        eB.value=selected.birth||"";
+        eGone.checked=!!selected.death;
+        eD.value=selected.dyear||"";
+        card.classList.add("editing");
+      };
+      const eCancel=document.getElementById("cECancel");
+      if(eCancel)eCancel.onclick=()=>card.classList.remove("editing");
+      const eSave=document.getElementById("cESave");
+      if(eSave)eSave.onclick=async()=>{
+        if(!selected)return;
+        const body={
+          last_name:eSur.value.trim(), first_name:eName.value.trim(),
+          patronymic:ePatr.value.trim(), maiden_name:eMaid.value.trim(),
+          gender:eG.value, birth_year:eB.value.trim(),
+          is_alive:!eGone.checked, death_year:eGone.checked?eD.value.trim():""
+        };
+        try{
+          const r=await fetch(`http://localhost:3001/api/person/${selected.id}`,{
+            method:"PATCH",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify(body)});
+          const res=await r.json();
+          if(res.ok)window.location.reload();
+          else alert("Не сохранилось: "+(res.error||""));
+        }catch(e){alert("Ошибка связи с сервером: "+e.message)}
+      };
+
+      // кнопки «добавить родню»: запоминаем, кого и что добавляем,
+      // и открываем ту же большую форму (прозвон дублей в ней уже есть)
+      function openAdd(action){
+        if(!selected)return;
+        setPrefill({ action, person:{
+          id:selected.id, name:selected.name||"", surname:selected.surname||"",
+          patr:selected.patr||"", g:selected.g, birth:selected.birth||null,
+          maiden:selected.maiden||"" }});
+        setShowForm(true);
+      }
+      const bChild=document.getElementById("cAddChild");
+      const bPar=document.getElementById("cAddParents");
+      const bSp=document.getElementById("cAddSpouse");
+      if(bChild)bChild.onclick=()=>openAdd("child");
+      if(bPar)bPar.onclick=()=>openAdd("parents");
+      if(bSp)bSp.onclick=()=>openAdd("spouse");
 
       // удаление выбранного человека
       const delBtn=document.getElementById("cDelete");
@@ -503,7 +563,7 @@ export default function App() {
             </div>
           </div>
           <div id="searchWrap">
-            <input id="search" type="text" placeholder="Найти человека… (Enter)" />
+            <input id="search" type="text" placeholder="Найти человека… (Enter)" autoComplete="off" />
             <div id="suggest"></div>
           </div>
         </div>
@@ -529,15 +589,43 @@ export default function App() {
           <div className="sub" id="cSub"></div>
           <div id="clan"></div>
           <div id="cRel"></div>
+          <button id="cEdit" className="c-edit">✎ править данные</button>
+          <div id="cEditPanel">
+            <div className="ce-row"><input id="cEsur" className="ce-in" placeholder="Фамилия"/></div>
+            <div className="ce-row"><input id="cEname" className="ce-in" placeholder="Имя"/></div>
+            <div className="ce-row"><input id="cEpatr" className="ce-in" placeholder="Отчество"/></div>
+            <div className="ce-row"><input id="cEmaiden" className="ce-in" placeholder="Девичья фамилия"/></div>
+            <div className="ce-row">
+              <select id="cEgender" className="ce-in">
+                <option value="m">мужчина</option>
+                <option value="f">женщина</option>
+              </select>
+            </div>
+            <div className="ce-row">
+              <input id="cEbirth" className="ce-in ce-year" placeholder="Год рожд."/>
+              <label className="ce-gone"><input id="cEgone" type="checkbox"/> ☾ ушёл из жизни</label>
+              <input id="cEdeath" className="ce-in ce-year" placeholder="Год смерти"/>
+            </div>
+            <div className="ce-row">
+              <button id="cESave" className="ce-save">сохранить</button>
+              <button id="cECancel" className="ce-cancel">отмена</button>
+            </div>
+          </div>
+          <div id="cAdd">
+            <button id="cAddChild" className="c-add">＋ ребёнок</button>
+            <button id="cAddParents" className="c-add">＋ родители</button>
+            <button id="cAddSpouse" className="c-add">＋ супруг(а)</button>
+          </div>
           <button id="cDelete" className="c-delete">удалить этого человека</button>
         </div>
 
         <div className="hud" id="note">колесо — зум · пустое место — перемещение · частицу можно таскать<br/>клик по человеку — карточка и построение семьи по ярусам</div>
 
-        <button className="af-fab" onClick={() => setShowForm(true)}>＋ Добавить семью</button>
+        <button className="af-fab" onClick={() => { setPrefill(null); setShowForm(true); }}>＋ Добавить семью</button>
         {showForm && (
           <AddFamily
-            onClose={() => setShowForm(false)}
+            prefill={prefill}
+            onClose={() => { setShowForm(false); setPrefill(null); }}
             onSaved={() => { setTimeout(() => window.location.reload(), 900); }}
           />
         )}
