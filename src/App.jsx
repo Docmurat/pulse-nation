@@ -50,8 +50,8 @@ export default function App() {
         return v||null};
       const people = raw.people.map((r, i) => ({
         id: r.id,
-        surname: r.last_name,
-        name: r.first_name,
+        surname: r.last_name || "",   // у «дыры» фамилии может не быть
+        name: r.first_name || "—",    // имя-дыра показывается прочерком
         patr: r.patronymic || "",
         maiden: r.maiden_name || null,
         g: normG(r.gender),                // 'm' / 'f'
@@ -186,14 +186,11 @@ export default function App() {
         const bsort=(a,b)=>((a.birth||0)-(b.birth||0));
         const row=(arr,y)=>{const w=(arr.length-1)*DX;
           arr.forEach((q,i)=>targets.set(q,[cx-w/2+i*DX,y]))};
-        // средний ярус: человек и ВСЕ его братья/сёстры (через любого общего
-        // родителя) по старшинству; супруг(а) — сразу справа от человека
-        const mid=[];
-        for(const q of [...sibs,p].sort(bsort)){
-          mid.push(q);
-          if(q===p&&sp)mid.push(sp);
-        }
+        // средний ярус: человек и ВСЕ его братья/сёстры по старшинству;
+        // супруг(а) — НЕ в этом ряду, а полуярусом ниже (между родными и детьми)
+        const mid=[...sibs,p].sort(bsort);
         row(top,cy-DY);row(mid,cy);row(kids.sort(bsort),cy+DY);
+        if(sp)targets.set(sp,[cx,cy+DY*.5]);
         hier={set,targets};
         sim.alpha(Math.max(sim.alpha(),.3)).restart();
       }

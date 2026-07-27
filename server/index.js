@@ -60,17 +60,16 @@ app.get("/api/graph", async (req, res) => {
   }
 });
 
-// Поиск людей по имени/фамилии — для выбора родителей в форме
+// Поиск людей по имени/фамилии — для выбора родителей в форме.
+// К каждому кандидату — подсказка-предок, чтобы различать тёзок:
+// дед по отцу → дед по матери → бабушка по отцу → бабушка по матери.
+// Деда умеем восстанавливать из отчества родителя (Таубиевич → Таубий).
 app.get("/api/search", async (req, res) => {
   try {
     const q = (req.query.q || "").trim().toLowerCase();
     if (q.length < 1) { res.json([]); return; }
     const r = await pool.query(
-      `SELECT p.id, p.last_name, p.first_name, p.patronymic, p.gender, p.birth_year, p.is_alive,
-              (SELECT f.first_name
-               FROM relationships r JOIN people f ON f.id = r.person_a
-               WHERE r.kind = 'parent' AND r.person_b = p.id AND f.gender = 'm'
-               LIMIT 1) AS father_name
+      `SELECT p.id, p.last_name, p.first_name, p.patronymic, p.gender, p.birth_year, p.is_alive
        FROM people p
        WHERE lower(p.first_name) LIKE $1
           OR lower(p.last_name) LIKE $1
@@ -79,6 +78,32 @@ app.get("/api/search", async (req, res) => {
        LIMIT 20`,
       [`%${q}%`]
     );
+
+    const parentsOf = async (id) => (await pool.query(
+      `SELECT p.id, p.first_name, p.patronymic, p.gender
+       FROM relationships r JOIN people p ON p.id = r.person_a
+       WHERE r.kind = 'parent' AND r.person_b = $1`, [id])).rows;
+
+    for (const row of r.rows) {
+      const pars = await parentsOf(row.id);
+      const dad = pars.find(x => x.gender === 'm');
+      const mom = pars.find(x => x.gender === 'f');
+      const dadPars = dad ? await parentsOf(dad.id) : [];
+      const momPars = mom ? await parentsOf(mom.id) : [];
+      // деды: по связям либо из отчества родителя
+      const gfDad = (dadPars.find(x => x.gender === 'm') || {}).first_name
+        || (dad && patrRoot(dad.patronymic)) || null;
+      const gfMom = (momPars.find(x => x.gender === 'm') || {}).first_name
+        || (mom && patrRoot(mom.patronymic)) || null;
+      // бабушки: только по связям (из отчеств их не восстановить)
+      const gmDad = (dadPars.find(x => x.gender === 'f') || {}).first_name || null;
+      const gmMom = (momPars.find(x => x.gender === 'f') || {}).first_name || null;
+      if (gfDad)      { row.gp_label = 'дед';     row.gp_name = gfDad; }
+      else if (gfMom) { row.gp_label = 'дед';     row.gp_name = gfMom; }
+      else if (gmDad) { row.gp_label = 'бабушка'; row.gp_name = gmDad; }
+      else if (gmMom) { row.gp_label = 'бабушка'; row.gp_name = gmMom; }
+      else            { row.gp_label = null;      row.gp_name = null; }
+    }
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -142,6 +167,22 @@ function feminizeSurname(s) {
 function patrRoot(p) {
   if (!p) return "";
   return p.replace(/(овна|евна|ович|евич)$/i, "");
+}
+// Образование отчества от имени отца (общая функция: и сохранение, и подсказка форме)
+function makePatronymic(firstName, gender) {
+  if (!firstName) return null;
+  let base = firstName.trim();
+  // 1) словарь исключений — главнее всех правил
+  const ex = PATR_EX[base.toLowerCase()];
+  if (ex) return gender === 'f' ? ex.f : ex.m;
+  // 2) общие правила: Таубий → Таубиевич (русские имена на «-ий» — в словаре)
+  const last = base.slice(-1).toLowerCase();
+  if (last === 'ь' || last === 'й') base = base.slice(0, -1); // Исмаиль → Исмаил-евич
+  const vowel = 'аяиуэоеыёю'.includes(base.slice(-1).toLowerCase());
+  // на гласную: Мусса-Хаджи → Мусса-Хаджиевич; на согласную: Аубекир → Аубекирович
+  const suffM = vowel ? 'евич' : 'ович';
+  const suffF = vowel ? 'евна' : 'овна';
+  return base + (gender === 'f' ? suffF : suffM);
 }
 // Нормализация имени для поиска похожих (Султан≈Солтан, регистр, дефисы)
 function normName(s) {
@@ -328,26 +369,11 @@ app.post("/api/family", async (req, res) => {
       if (!inheritedSurname) inheritedSurname = data.father.last_name || null;
     }
 
-    // образование отчества от имени отца
-    function makePatronymic(firstName, gender) {
-      if (!firstName) return null;
-      let base = firstName.trim();
-      // 1) словарь исключений — главнее всех правил
-      const ex = PATR_EX[base.toLowerCase()];
-      if (ex) return gender === 'f' ? ex.f : ex.m;
-      // 2) общие правила: Таубий → Таубиевич (русские имена на «-ий» — в словаре)
-      const last = base.slice(-1).toLowerCase();
-      if (last === 'ь' || last === 'й') base = base.slice(0, -1); // Исмаиль → Исмаил-евич
-      const vowel = 'аяиуэоеыёю'.includes(base.slice(-1).toLowerCase());
-      // на гласную: Мусса-Хаджи → Мусса-Хаджиевич; на согласную: Аубекир → Аубекирович
-      const suffM = vowel ? 'евич' : 'ович';
-      const suffF = vowel ? 'евна' : 'овна';
-      return base + (gender === 'f' ? suffF : suffM);
-    }
-
     const createdChildren = [];
     const newChildrenInfo = [];   // НОВЫЕ дети (не из базы) — для проверки «не одна ли это семья?»
     const motherIds = [];         // id всех матерей этой семьи — чтобы не путать их с «чужими» родителями
+    const fatherUnknownKids = []; // дети, записанные при полностью неизвестном отце
+    let anySurnameFromMother = false;
 
     // --- проходим по каждой матери и её детям ---
     for (const group of (data.mothers || [])) {
@@ -363,6 +389,23 @@ app.post("/api/family", async (req, res) => {
       }
       const motherId = await resolveParent(motherSpec, 'f', null);
       if (motherId) motherIds.push(motherId);
+
+      // --- фамилия для детей ЭТОЙ матери: отец → «со слов» → МАТЬ ---
+      // Правило основателя: если про отца не известно ничего совсем,
+      // дети носят фамилию матери, а вопросы (отчество, род, сама фамилия)
+      // ложатся в очередь на разбор — см. father_unknown ниже.
+      let groupSurname = inheritedSurname;
+      let surnameFromMother = false;
+      if (!groupSurname && !fatherId) {
+        let momLast = null;
+        if (motherId && motherSpec && motherSpec.mode === 'existing') {
+          const rm = await client.query(`SELECT last_name FROM people WHERE id = $1`, [motherId]);
+          momLast = (rm.rows[0] && rm.rows[0].last_name) || null;
+        } else if (motherSpec && motherSpec.last_name) {
+          momLast = motherSpec.last_name.trim() || null;
+        }
+        if (momLast) { groupSurname = masculinizeSurname(momLast); surnameFromMother = true; }
+      }
 
       // брачная нить между отцом и матерью — только если 'married'
       if (fatherId && motherId && group.relation === 'married') {
@@ -390,12 +433,13 @@ app.post("/api/family", async (req, res) => {
           continue;
         }
         const childSurname = (ch.gender === 'f')
-          ? feminizeSurname(inheritedSurname)   // дочери: Курджиев → Курджиева
-          : inheritedSurname;
+          ? feminizeSurname(groupSurname)   // дочери: Курджиев → Курджиева
+          : groupSurname;
         const childId = await createPerson({
           last_name: childSurname,
           first_name: ch.first_name,
-          patronymic: makePatronymic(fatherFirstName, ch.gender),
+          // отчество из формы (человек его видел и мог поправить) главнее автоматики
+          patronymic: (ch.patronymic || "").trim() || makePatronymic(fatherFirstName, ch.gender),
           gender: ch.gender,
           is_alive: ch.is_alive ?? true,
           birth_year: ch.birth_year || null,
@@ -404,6 +448,10 @@ app.post("/api/family", async (req, res) => {
           death_date: ch.death_date || null,
         });
         createdChildren.push(childId);
+        if (!fatherId && !fatherFirstName) {
+          fatherUnknownKids.push(childId);
+          if (surnameFromMother) anySurnameFromMother = true;
+        }
         newChildrenInfo.push({
           id: childId,
           first_name: ch.first_name,
@@ -431,6 +479,21 @@ app.post("/api/family", async (req, res) => {
           clan: clanNameFinal,
           reason: "фамилия отца неизвестна — род записан со слов, требует подтверждения",
           children: createdChildren,
+        })]
+      ).catch(() => {});
+    }
+
+    // отец неизвестен совсем → вопросы модератору: отчество, род, фамилия
+    if (fatherUnknownKids.length) {
+      await pool.query(
+        `INSERT INTO review_queue (kind, person_id, details) VALUES ('father_unknown', $1, $2)`,
+        [fatherUnknownKids[0], JSON.stringify({
+          reason: "отец неизвестен — про него не записано ничего",
+          children: fatherUnknownKids,
+          surname: anySurnameFromMother
+            ? "фамилия записана по матери — уточнить"
+            : (surnameManualNorm ? "фамилия записана со слов" : "фамилия не записана"),
+          questions: ["отчество детей?", "род (родословная) по отцу?"],
         })]
       ).catch(() => {});
     }
@@ -551,6 +614,14 @@ app.delete("/api/person/:id", async (req, res) => {
 
 // ============ ПРОВЕРКА ОДНОГО ЧЕЛОВЕКА НА ДУБЛИ (по всей базе) ============
 // Форма зовёт этот адрес, когда заполнение человека закончено.
+// GET /api/patronymic?father=Таубий → { m: "Таубиевич", f: "Таубиевна" }
+// Форма подставляет отчества детям сразу, по тем же правилам, что при сохранении.
+app.get("/api/patronymic", (req, res) => {
+  const father = (req.query.father || "").trim();
+  if (!father) { res.json({ m: null, f: null }); return; }
+  res.json({ m: makePatronymic(father, 'm'), f: makePatronymic(father, 'f') });
+});
+
 // GET /api/check-person?first=Хасан&last=Курджиев&year=1890&gender=m
 // Отвечает списком похожих людей из базы + их родителями (для сверки связей).
 app.get("/api/check-person", async (req, res) => {

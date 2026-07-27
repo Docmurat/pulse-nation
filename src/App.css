@@ -137,6 +137,7 @@
 .af-children-title{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
 .af-child{display:flex;align-items:center;gap:6px;margin-bottom:7px}
 .af-cname{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;font-family:inherit;min-width:0}
+.af-cpatr{flex:1.2} /* отчество чуть шире имени */
 .af-cyear{width:56px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;font-size:13px;outline:none;font-family:inherit}
 .af-alive{display:flex;align-items:center;gap:3px;font-size:13px;color:var(--dim);cursor:pointer}
 /* кнопка «ушёл из жизни»: полумесяц справа от даты; выключен — серый, включён — цветной */

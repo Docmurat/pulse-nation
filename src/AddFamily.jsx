@@ -142,7 +142,7 @@ function PersonPicker({ role, gender, value, onChange }) {
     setChosenLabel(personLabel(p));
     setResults([]); setQuery(""); setCand(null);
     setMode("existing");
-    onChange({ mode: "existing", id: p.id, first_name: p.first_name });
+    onChange({ mode: "existing", id: p.id, first_name: p.first_name, last_name: p.last_name });
   }
 
   // прозвон дублей: зовётся, когда поле имени/года «отпущено» (человек дозаполнен)
@@ -186,7 +186,7 @@ function PersonPicker({ role, gender, value, onChange }) {
                       <div key={p.id} className="pf-res" onClick={() => pick(p)}>
                         {p.last_name} {p.first_name}{p.patronymic ? ` ${p.patronymic}` : ""}{p.birth_year ? ` (${p.birth_year})` : ""}
                         {!p.is_alive ? " · ☾" : ""}
-                        {p.father_name && <span className="pf-res-dad"> · отец: {p.father_name}</span>}
+                        {p.gp_name && <span className="pf-res-dad"> · {p.gp_label}: {p.gp_name}</span>}
                       </div>
                     ))}
                   </div>
@@ -206,17 +206,24 @@ function PersonPicker({ role, gender, value, onChange }) {
             onReject={() => { setDismissed(firstName.trim()); setCand(null); }} />}
         </>
       )}
-      {mode === "none" && <div className="pf-hint">будет отмечено как пробел (дыра) — дозаполнишь позже</div>}
+      {mode === "none" && <div className="pf-hint">дозаполнишь позже</div>}
     </div>
   );
 }
 
 // ---------- сама форма ----------
-const newChild = () => ({ first_name: "", gender: "m", ...emptyDates, existing_id: null, existing_label: "" });
+const newChild = (pb) => ({ first_name: "", gender: "m", patronymic: pb ? (pb.m || "") : "",
+  patr_touched: false, ...emptyDates, existing_id: null, existing_label: "" });
+
+// мужское отчество ↔ женское: Таубиевич ↔ Таубиевна (для ручных правок)
+const deriveP = (s, g) => {
+  s = (s || "").trim();
+  if (!s) return "";
+  return g === "f" ? s.replace(/вич$/i, "вна") : s.replace(/вна$/i, "вич");
+};
 
 export default function AddFamily({ onClose, onSaved }) {
   const [father, setFather] = useState({ mode: "existing" });
-  const [surnameManual, setSurnameManual] = useState("");
   const [mothers, setMothers] = useState([
     { mother: { mode: "existing" }, relation: "none", children: [newChild()] },
   ]);
@@ -226,12 +233,50 @@ export default function AddFamily({ onClose, onSaved }) {
   const [childDup, setChildDup] = useState({});       // ключ "mi_ci" → кандидаты
   const dismissedRef = useRef({});                    // ключ "mi_ci" → имя, признанное «другим человеком»
 
+  // --- отчества детей: подставляются от имени отца, правка одного правит всех ---
+  const [patrBase, setPatrBase] = useState({ m: "", f: "" }); // текущая пара отчеств
+  const fatherFirst = (father && (father.mode === "existing" || father.mode === "new")
+    && father.first_name) ? father.first_name.trim() : "";
+  const fatherLast = (father && (father.mode === "existing" || father.mode === "new")
+    && father.last_name) ? father.last_name.trim() : "";
+
+  // имя отца известно → спрашиваем у сервера пару отчеств (словарь PATR_EX там)
+  useEffect(() => {
+    if (!fatherFirst || fatherFirst.length < 2) { setPatrBase({ m: "", f: "" }); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/api/patronymic?father=` + encodeURIComponent(fatherFirst));
+        const d = await r.json();
+        setPatrBase({ m: d.m || "", f: d.f || "" });
+      } catch { /* сервер молчит — просто без подсказки */ }
+    }, 400); // небольшая пауза, чтобы не дёргать сервер на каждую букву
+    return () => clearTimeout(t);
+  }, [fatherFirst]);
+
+  // новая пара отчеств → обновляем всех детей, чьё отчество не правили руками
+  useEffect(() => {
+    setMothers(ms => ms.map(g => ({ ...g, children: g.children.map(c =>
+      (c.existing_id || c.patr_touched) ? c : { ...c, patronymic: patrBase[c.gender] || "" }) })));
+  }, [patrBase]);
+
+  // ручная правка отчества (на blur): она становится новой базой для всех детей
+  function syncPatr(mi, ci) {
+    const c = mothers[mi]?.children[ci];
+    if (!c) return;
+    const v = (c.patronymic || "").trim();
+    if (!v) return;
+    setPatrBase({
+      m: c.gender === "m" ? v : deriveP(v, "m"),
+      f: c.gender === "f" ? v : deriveP(v, "f"),
+    });
+  }
+
   function setMother(i, patch) {
     setMothers(ms => ms.map((m, k) => k === i ? { ...m, ...patch } : m));
   }
   function addMother() {
     checkChildrenOf(mothers.length - 1);
-    setMothers(ms => [...ms, { mother: { mode: "existing" }, relation: "none", children: [newChild()] }]);
+    setMothers(ms => [...ms, { mother: { mode: "existing" }, relation: "none", children: [newChild(patrBase)] }]);
   }
   function removeMother(i) {
     setMothers(ms => ms.length > 1 ? ms.filter((_, k) => k !== i) : ms);
@@ -239,10 +284,17 @@ export default function AddFamily({ onClose, onSaved }) {
   function setChild(mi, ci, patch) {
     setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: m.children.map((c, j) => j === ci ? { ...c, ...patch } : c) }));
   }
+  // смена пола: отчество следует за полом (ручное — переводится, авто — из базы пары)
+  function setGender(mi, ci, g) {
+    const c = mothers[mi]?.children[ci];
+    if (!c) return;
+    setChild(mi, ci, { gender: g,
+      patronymic: c.patr_touched ? deriveP(c.patronymic, g) : (patrBase[g] || "") });
+  }
   function addChild(mi) {
     const last = mothers[mi].children.length - 1;
     checkChild(mi, last);
-    setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: [...m.children, newChild()] }));
+    setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: [...m.children, newChild(patrBase)] }));
   }
   function removeChild(mi, ci) {
     setMothers(ms => ms.map((m, k) => k !== mi ? m : { ...m, children: m.children.length > 1 ? m.children.filter((_, j) => j !== ci) : m.children }));
@@ -257,7 +309,7 @@ export default function AddFamily({ onClose, onSaved }) {
     const key = `${mi}_${ci}`;
     if (c.existing_id || nm.length < 3 || dismissedRef.current[key] === nm) return false;
     const year = c.birth_year || (c.birth_date ? c.birth_date.slice(0, 4) : "");
-    const found = await checkPerson({ first: nm, last: surnameManual, year, gender: c.gender,
+    const found = await checkPerson({ first: nm, last: fatherLast, year, gender: c.gender,
       father: father.first_name || "",
       mother: mothers[mi].mother.first_name || "" });
     setChildDup(d => ({ ...d, [key]: found.length ? found : undefined }));
@@ -276,7 +328,7 @@ export default function AddFamily({ onClose, onSaved }) {
 
   function adoptChild(mi, ci, c) {
     const entered = mothers[mi].children[ci];
-    reportMismatch("ребёнок", { first_name: entered.first_name.trim(), last_name: surnameManual.trim(), ...datesToPayload(entered) }, c);
+    reportMismatch("ребёнок", { first_name: entered.first_name.trim(), last_name: fatherLast, ...datesToPayload(entered) }, c);
     setChild(mi, ci, { existing_id: c.id, existing_label: personLabel(c) });
     setChildDup(d => ({ ...d, [`${mi}_${ci}`]: undefined }));
   }
@@ -288,7 +340,6 @@ export default function AddFamily({ onClose, onSaved }) {
   function buildPayload(force) {
     return {
       force: !!force,
-      surnameManual: surnameManual.trim() || null,
       father,
       mothers: mothers.map(m => ({
         mother: m.mother,
@@ -298,7 +349,8 @@ export default function AddFamily({ onClose, onSaved }) {
           .filter(c => c.existing_id || c.first_name.trim())
           .map(c => c.existing_id
             ? { existing_id: c.existing_id, first_name: c.first_name.trim() }
-            : { first_name: c.first_name.trim(), gender: c.gender, ...datesToPayload(c) }),
+            : { first_name: c.first_name.trim(), patronymic: (c.patronymic || "").trim() || null,
+                gender: c.gender, ...datesToPayload(c) }),
       })),
     };
   }
@@ -354,11 +406,6 @@ export default function AddFamily({ onClose, onSaved }) {
           <PersonPicker role="глава семьи" gender="m" value={father} onChange={setFather} />
         </div>
 
-        <div className="af-row2">
-          <label>Фамилия детей<input value={surnameManual} onChange={e => setSurnameManual(e.target.value)} placeholder="в мужском роде: Курджиев (если отец не из базы)" /></label>
-        </div>
-
-
         {mothers.map((m, mi) => (
           <div className="af-mother" key={mi}>
             <div className="af-mother-head">
@@ -396,15 +443,19 @@ export default function AddFamily({ onClose, onSaved }) {
                         <input className="af-cname" placeholder="имя" value={c.first_name}
                           onBlur={() => checkChild(mi, ci)}
                           onChange={e => setChild(mi, ci, { first_name: e.target.value })} />
+                        <input className="af-cname af-cpatr" placeholder="отчество" value={c.patronymic}
+                          title="подставляется от имени отца; можно поправить — исправится у всех детей"
+                          onBlur={() => syncPatr(mi, ci)}
+                          onChange={e => setChild(mi, ci, { patronymic: e.target.value, patr_touched: true })} />
                         <div className="af-gender" title="пол ребёнка">
                           <button type="button"
                             className={"af-g af-g-m" + (c.gender === "m" ? " on" : "")}
                             title="мальчик"
-                            onClick={() => setChild(mi, ci, { gender: "m" })}>👦</button>
+                            onClick={() => setGender(mi, ci, "m")}>👦</button>
                           <button type="button"
                             className={"af-g af-g-f" + (c.gender === "f" ? " on" : "")}
                             title="девочка"
-                            onClick={() => setChild(mi, ci, { gender: "f" })}>👧</button>
+                            onClick={() => setGender(mi, ci, "f")}>👧</button>
                         </div>
                         {m.children.length > 1 && <button className="af-remove" onClick={() => removeChild(mi, ci)}>✕</button>}
                       </div>
